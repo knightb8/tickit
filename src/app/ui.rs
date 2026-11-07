@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Tabs, Wrap},
 };
 
-use super::state::{AppState, EditorField, Focus, Mode, SettingsItem, View};
+use super::state::{AppState, DueFilter, EditorField, Focus, Mode, SettingsItem, View};
 use crate::theme::Theme;
 
 /// ASCII art logo for Tickit (used in help screen)
@@ -274,17 +274,27 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
         "All Tasks".to_string()
     };
 
-    let (list_rect, detail_rect) = if chunks[1].width >= 80 {
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Due date filter header
+            Constraint::Min(0),    // Tasks list and details pane
+        ])
+        .split(chunks[1]);
+
+    render_due_filter_header(frame, state, main_chunks[0]);
+
+    let (list_rect, detail_rect) = if main_chunks[1].width >= 80 {
         let split = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
                 Constraint::Percentage(55),
                 Constraint::Percentage(45),
             ])
-            .split(chunks[1]);
+            .split(main_chunks[1]);
         (split[0], Some(split[1]))
     } else {
-        (chunks[1], None)
+        (main_chunks[1], None)
     };
 
     let visible_height = (list_rect.height.saturating_sub(2) as usize).max(1);
@@ -301,79 +311,88 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
     }
     state.task_scroll_offset.set(offset);
 
-    let task_items: Vec<ListItem> = state
-        .tasks
-        .iter()
-        .enumerate()
-        .skip(offset)
-        .take(visible_height)
-        .map(|(i, task)| {
-            let selected = i == state.task_index;
-            let base_style = if selected {
-                colors.selected()
-            } else {
-                colors.text()
-            };
+    let task_items: Vec<ListItem> = if state.tasks.is_empty() {
+        let empty_msg = if state.due_filter != DueFilter::All {
+            format!("  No tasks matching due filter: {}", state.due_filter.name())
+        } else {
+            "  No tasks in this list. Press 'n' to add one.".to_string()
+        };
+        vec![ListItem::new(Span::styled(empty_msg, colors.text_muted()))]
+    } else {
+        state
+            .tasks
+            .iter()
+            .enumerate()
+            .skip(offset)
+            .take(visible_height)
+            .map(|(i, task)| {
+                let selected = i == state.task_index;
+                let base_style = if selected {
+                    colors.selected()
+                } else {
+                    colors.text()
+                };
 
-            let checkbox = if task.completed { "☑" } else { "☐" };
-            let checkbox_style = if task.completed {
-                colors.text_success()
-            } else {
-                colors.text_muted()
-            };
-
-            let title_style = if task.completed {
-                base_style
-                    .add_modifier(Modifier::CROSSED_OUT)
-                    .fg(colors.fg_muted)
-            } else {
-                base_style
-            };
-
-            let priority_style = colors.priority_style(task.priority);
-            let priority_icon = task.priority.icon();
-
-            let mut spans = vec![
-                Span::styled(format!(" {} ", checkbox), checkbox_style),
-                Span::styled(format!("{} ", priority_icon), priority_style),
-                Span::styled(&task.title, title_style),
-            ];
-
-            // Add due date indicator
-            if let Some(due_date) = task.due_date {
-                let now = chrono::Utc::now();
-                let is_overdue = due_date < now && !task.completed;
-                let is_soon = due_date < now + chrono::Duration::days(2) && !is_overdue;
-
-                let due_style = if is_overdue {
-                    colors.text_error()
-                } else if is_soon {
-                    colors.text_warning()
+                let checkbox = if task.completed { "☑" } else { "☐" };
+                let checkbox_style = if task.completed {
+                    colors.text_success()
                 } else {
                     colors.text_muted()
                 };
 
-                let due_str = due_date.format("%m/%d").to_string();
-                spans.push(Span::styled(format!(" 📅{}", due_str), due_style));
-            }
+                let title_style = if task.completed {
+                    base_style
+                        .add_modifier(Modifier::CROSSED_OUT)
+                        .fg(colors.fg_muted)
+                } else {
+                    base_style
+                };
 
-            // Add URL indicator
-            if task.url.is_some() {
-                spans.push(Span::styled(" 🔗", colors.text_info()));
-            }
+                let priority_style = colors.priority_style(task.priority);
+                let priority_icon = task.priority.icon();
 
-            // Add tag indicators
-            if !task.tag_ids.is_empty() {
-                let tag_count = task.tag_ids.len();
-                spans.push(Span::styled(
-                    format!(" [{}]", tag_count),
-                    colors.text_secondary(),
-                ));
-            }
+                let mut spans = vec![
+                    Span::styled(format!(" {} ", checkbox), checkbox_style),
+                    Span::styled(format!("{} ", priority_icon), priority_style),
+                    Span::styled(&task.title, title_style),
+                ];
 
-            ListItem::new(Line::from(spans))
-        })
-        .collect();
+                // Add due date indicator
+                if let Some(due_date) = task.due_date {
+                    let now = chrono::Utc::now();
+                    let is_overdue = due_date < now && !task.completed;
+                    let is_soon = due_date < now + chrono::Duration::days(2) && !is_overdue;
+
+                    let due_style = if is_overdue {
+                        colors.text_error()
+                    } else if is_soon {
+                        colors.text_warning()
+                    } else {
+                        colors.text_muted()
+                    };
+
+                    let due_str = due_date.format("%m/%d").to_string();
+                    spans.push(Span::styled(format!(" 📅{}", due_str), due_style));
+                }
+
+                // Add URL indicator
+                if task.url.is_some() {
+                    spans.push(Span::styled(" 🔗", colors.text_info()));
+                }
+
+                // Add tag indicators
+                if !task.tag_ids.is_empty() {
+                    let tag_count = task.tag_ids.len();
+                    spans.push(Span::styled(
+                        format!(" [{}]", tag_count),
+                        colors.text_secondary(),
+                    ));
+                }
+
+                ListItem::new(Line::from(spans))
+            })
+            .collect()
+    };
 
     let show_status = if state.show_completed {
         ""
@@ -402,6 +421,77 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
     if let Some(detail_area) = detail_rect {
         render_task_detail_pane(frame, state, detail_area);
     }
+}
+
+/// Render the due-ness filter header section
+fn render_due_filter_header(frame: &mut Frame, state: &AppState, area: Rect) {
+    let colors = state.theme.colors();
+
+    let mut spans = Vec::new();
+    spans.push(Span::raw(" "));
+
+    for (idx, filter) in DueFilter::all().iter().enumerate() {
+        let is_selected = *filter == state.due_filter;
+        let count = state.due_filter_counts.get(idx).copied().unwrap_or(0);
+
+        let filter_style = if is_selected {
+            match filter {
+                DueFilter::All => colors.selected().add_modifier(Modifier::BOLD),
+                DueFilter::Overdue => Style::default()
+                    .fg(colors.bg)
+                    .bg(colors.error)
+                    .add_modifier(Modifier::BOLD),
+                DueFilter::Today => Style::default()
+                    .fg(colors.bg)
+                    .bg(colors.warning)
+                    .add_modifier(Modifier::BOLD),
+                DueFilter::ThisWeek => Style::default()
+                    .fg(colors.bg)
+                    .bg(colors.info)
+                    .add_modifier(Modifier::BOLD),
+                DueFilter::NoDueDate => Style::default()
+                    .fg(colors.bg)
+                    .bg(colors.secondary)
+                    .add_modifier(Modifier::BOLD),
+            }
+        } else {
+            match filter {
+                DueFilter::Overdue if count > 0 => colors.text_error(),
+                DueFilter::Today if count > 0 => colors.text_warning(),
+                DueFilter::ThisWeek if count > 0 => colors.text_info(),
+                _ => colors.text_muted(),
+            }
+        };
+
+        if is_selected {
+            spans.push(Span::styled(
+                format!(" [ {} {} ({}) ] ", filter.icon(), filter.name(), count),
+                filter_style,
+            ));
+        } else {
+            spans.push(Span::styled(
+                format!("  {} {} ({})  ", filter.icon(), filter.name(), count),
+                filter_style,
+            ));
+        }
+        spans.push(Span::raw(" "));
+    }
+
+    let header_block = Block::default()
+        .title(" Due Filter [f: cycle / F: prev] ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(if state.due_filter != DueFilter::All {
+            colors.block_focus()
+        } else {
+            colors.block()
+        });
+
+    let p = Paragraph::new(Line::from(spans))
+        .block(header_block)
+        .alignment(Alignment::Left);
+
+    frame.render_widget(p, area);
 }
 
 /// Render the task detail / preview pane
@@ -672,6 +762,8 @@ fn render_status_bar(frame: &mut Frame, state: &AppState, area: Rect) {
     } else {
         vec![
             Span::styled(" ", Style::default()),
+            Span::styled("f", colors.key_hint()),
+            Span::styled(": due filter  ", colors.text_muted()),
             Span::styled("Tab", colors.key_hint()),
             Span::styled(": views  ", colors.text_muted()),
             Span::styled("?", colors.key_hint()),
@@ -816,6 +908,10 @@ fn render_help_popup(frame: &mut Frame, state: &AppState) {
         Line::from(vec![
             Span::styled("  R                  ", colors.key_hint()),
             Span::styled("Toggle Recently Closed view", colors.text()),
+        ]),
+        Line::from(vec![
+            Span::styled("  f / F  or  [ / ]   ", colors.key_hint()),
+            Span::styled("Cycle due-date filter (All / Overdue / Today / Week / No Date)", colors.text()),
         ]),
         Line::from(""),
         Line::from(vec![Span::styled(

@@ -337,6 +337,14 @@ fn handle_tasks_view(state: &mut AppState, key: KeyEvent) {
             let _ = state.toggle_recently_closed();
         }
 
+        // Cycle due date filter (f/F or [/])
+        KeyCode::Char('f') | KeyCode::Char(']') => {
+            state.cycle_due_filter();
+        }
+        KeyCode::Char('F') | KeyCode::Char('[') => {
+            state.prev_due_filter();
+        }
+
         _ => {}
     }
 }

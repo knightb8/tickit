@@ -146,6 +146,107 @@ pub enum Focus {
     Main,
 }
 
+/// Due date filter options
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DueFilter {
+    /// Show all tasks
+    #[default]
+    All,
+    /// Tasks overdue
+    Overdue,
+    /// Tasks due today
+    Today,
+    /// Tasks due in the next 7 days
+    ThisWeek,
+    /// Tasks without a due date
+    NoDueDate,
+}
+
+impl DueFilter {
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::All,
+            Self::Overdue,
+            Self::Today,
+            Self::ThisWeek,
+            Self::NoDueDate,
+        ]
+    }
+
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Overdue => "Overdue",
+            Self::Today => "Today",
+            Self::ThisWeek => "This Week",
+            Self::NoDueDate => "No Date",
+        }
+    }
+
+    pub const fn icon(&self) -> &'static str {
+        match self {
+            Self::All => "●",
+            Self::Overdue => "⚠",
+            Self::Today => "📅",
+            Self::ThisWeek => "🗓",
+            Self::NoDueDate => "💤",
+        }
+    }
+
+    pub const fn next(&self) -> Self {
+        match self {
+            Self::All => Self::Overdue,
+            Self::Overdue => Self::Today,
+            Self::Today => Self::ThisWeek,
+            Self::ThisWeek => Self::NoDueDate,
+            Self::NoDueDate => Self::All,
+        }
+    }
+
+    pub const fn prev(&self) -> Self {
+        match self {
+            Self::All => Self::NoDueDate,
+            Self::Overdue => Self::All,
+            Self::Today => Self::Overdue,
+            Self::ThisWeek => Self::Today,
+            Self::NoDueDate => Self::ThisWeek,
+        }
+    }
+
+    /// Check if a task matches this due filter
+    pub fn matches(&self, task: &Task, now: chrono::DateTime<chrono::Utc>) -> bool {
+        match self {
+            Self::All => true,
+            Self::Overdue => {
+                if task.completed {
+                    false
+                } else if let Some(due) = task.due_date {
+                    due < now
+                } else {
+                    false
+                }
+            }
+            Self::Today => {
+                if let Some(due) = task.due_date {
+                    due.date_naive() == now.date_naive()
+                } else {
+                    false
+                }
+            }
+            Self::ThisWeek => {
+                if let Some(due) = task.due_date {
+                    let today = now.date_naive();
+                    let week_later = today + chrono::Duration::days(7);
+                    due.date_naive() >= today && due.date_naive() <= week_later
+                } else {
+                    false
+                }
+            }
+            Self::NoDueDate => task.due_date.is_none(),
+        }
+    }
+}
+
 /// Editor field being edited
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EditorField {
@@ -274,6 +375,10 @@ pub struct AppState {
     pub task_scroll_offset: Cell<usize>,
     /// Sidebar list scroll offset
     pub sidebar_scroll_offset: Cell<usize>,
+    /// Due date filter
+    pub due_filter: DueFilter,
+    /// Task counts for each due filter [All, Overdue, Today, ThisWeek, NoDueDate]
+    pub due_filter_counts: [usize; 5],
 }
 
 /// Actions that need confirmation
@@ -339,6 +444,8 @@ impl AppState {
             showing_recently_closed: false,
             task_scroll_offset: Cell::new(0),
             sidebar_scroll_offset: Cell::new(0),
+            due_filter: DueFilter::default(),
+            due_filter_counts: [0; 5],
         };
 
         state.refresh_data()?;
@@ -374,41 +481,81 @@ impl AppState {
 
     /// Refresh tasks based on current filter
     pub fn refresh_tasks(&mut self) -> Result<()> {
-        if self.showing_recently_closed {
-            self.tasks = self.db.get_recently_closed_tasks(50)?;
-            if !self.tasks.is_empty() && self.task_index >= self.tasks.len() {
-                self.task_index = self.tasks.len() - 1;
-            }
-            return Ok(());
-        }
-
-        let completed_filter = if self.show_completed {
-            None
+        let unfiltered_tasks = if self.showing_recently_closed {
+            self.db.get_recently_closed_tasks(50)?
         } else {
-            Some(false)
+            let completed_filter = if self.show_completed {
+                None
+            } else {
+                Some(false)
+            };
+
+            // Check if Inbox is selected - if so, show all tasks (like "All" did before)
+            let is_inbox_selected = self.selected_list().map(|l| l.is_inbox).unwrap_or(false);
+
+            if is_inbox_selected {
+                // Inbox shows all tasks from all lists
+                self.db
+                    .get_tasks_with_filter(None, completed_filter, None)?
+            } else if let Some(list_id) = self.selected_list_id {
+                self.db
+                    .get_tasks_with_filter(Some(list_id), completed_filter, None)?
+            } else {
+                self.db
+                    .get_tasks_with_filter(None, completed_filter, None)?
+            }
         };
 
-        // Check if Inbox is selected - if so, show all tasks (like "All" did before)
-        let is_inbox_selected = self.selected_list().map(|l| l.is_inbox).unwrap_or(false);
+        let now = chrono::Utc::now();
+        self.due_filter_counts = [
+            unfiltered_tasks.len(),
+            unfiltered_tasks.iter().filter(|t| DueFilter::Overdue.matches(t, now)).count(),
+            unfiltered_tasks.iter().filter(|t| DueFilter::Today.matches(t, now)).count(),
+            unfiltered_tasks.iter().filter(|t| DueFilter::ThisWeek.matches(t, now)).count(),
+            unfiltered_tasks.iter().filter(|t| DueFilter::NoDueDate.matches(t, now)).count(),
+        ];
 
-        self.tasks = if is_inbox_selected {
-            // Inbox shows all tasks from all lists
-            self.db
-                .get_tasks_with_filter(None, completed_filter, None)?
-        } else if let Some(list_id) = self.selected_list_id {
-            self.db
-                .get_tasks_with_filter(Some(list_id), completed_filter, None)?
+        self.tasks = if self.due_filter == DueFilter::All {
+            unfiltered_tasks
         } else {
-            self.db
-                .get_tasks_with_filter(None, completed_filter, None)?
+            unfiltered_tasks
+                .into_iter()
+                .filter(|t| self.due_filter.matches(t, now))
+                .collect()
         };
 
         // Clamp task index
-        if !self.tasks.is_empty() && self.task_index >= self.tasks.len() {
+        if self.tasks.is_empty() {
+            self.task_index = 0;
+        } else if self.task_index >= self.tasks.len() {
             self.task_index = self.tasks.len() - 1;
         }
 
         Ok(())
+    }
+
+    /// Cycle to next due date filter
+    pub fn cycle_due_filter(&mut self) {
+        self.due_filter = self.due_filter.next();
+        self.task_index = 0;
+        self.task_scroll_offset.set(0);
+        let _ = self.refresh_tasks();
+    }
+
+    /// Cycle to previous due date filter
+    pub fn prev_due_filter(&mut self) {
+        self.due_filter = self.due_filter.prev();
+        self.task_index = 0;
+        self.task_scroll_offset.set(0);
+        let _ = self.refresh_tasks();
+    }
+
+    /// Set a specific due date filter
+    pub fn set_due_filter(&mut self, filter: DueFilter) {
+        self.due_filter = filter;
+        self.task_index = 0;
+        self.task_scroll_offset.set(0);
+        let _ = self.refresh_tasks();
     }
 
     /// Get the currently selected task
