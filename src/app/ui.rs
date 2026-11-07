@@ -108,7 +108,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     }
 }
 
-const SIDEBAR_WIDTH: u16 = 30;
+const LEFT_COLUMN_PERCENT: u16 = 36;
 
 /// Render the unified top bar: Sections / Views on left, Due Filter on right (when in Tasks view)
 fn render_tabs(frame: &mut Frame, state: &AppState, area: Rect) {
@@ -116,8 +116,8 @@ fn render_tabs(frame: &mut Frame, state: &AppState, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(SIDEBAR_WIDTH),
-                Constraint::Min(0),
+                Constraint::Percentage(LEFT_COLUMN_PERCENT),
+                Constraint::Percentage(100 - LEFT_COLUMN_PERCENT),
             ])
             .split(area);
 
@@ -264,19 +264,30 @@ fn render_main(frame: &mut Frame, state: &AppState, area: Rect) {
     }
 }
 
-/// Render the tasks view with sidebar
+/// Render the tasks view with sidebar and task details on left, task list on right
 fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
     let colors = state.theme.colors();
 
-    let chunks = Layout::default()
+    let col_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(SIDEBAR_WIDTH), // Sidebar (30)
-            Constraint::Min(0),                // Task list + details
+            Constraint::Percentage(LEFT_COLUMN_PERCENT), // Left column (Details top + Lists bottom)
+            Constraint::Percentage(100 - LEFT_COLUMN_PERCENT), // Right column (Tasks list)
         ])
         .split(area);
 
-    // Sidebar (lists)
+    let left_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(55), // Task Details (top of left column)
+            Constraint::Percentage(45), // Lists sidebar (bottom of left column)
+        ])
+        .split(col_chunks[0]);
+
+    // 1. Top of Left Column: Task Details
+    render_task_detail_pane(frame, state, left_chunks[0]);
+
+    // 2. Bottom of Left Column: Lists Sidebar
     let sidebar_focused = state.focus == Focus::Sidebar;
     let sidebar_style = if sidebar_focused {
         colors.block_focus()
@@ -308,7 +319,7 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
         };
 
         let clean_icon = list.icon.replace('\u{fe0f}', "");
-        let max_name_len = (chunks[0].width.saturating_sub(11) as usize).max(8);
+        let max_name_len = (left_chunks[1].width.saturating_sub(11) as usize).max(8);
         let display_name = if list.name.chars().count() > max_name_len {
             let truncated: String = list.name.chars().take(max_name_len.saturating_sub(1)).collect();
             format!("{}…", truncated)
@@ -340,7 +351,7 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
     ])));
 
     let total_sidebar_items = list_items.len();
-    let sidebar_height = (chunks[0].height.saturating_sub(2) as usize).max(1);
+    let sidebar_height = (left_chunks[1].height.saturating_sub(2) as usize).max(1);
     let mut sb_offset = state.sidebar_scroll_offset.get();
     if state.list_index < sb_offset {
         sb_offset = state.list_index;
@@ -373,9 +384,9 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
             .border_style(sidebar_style),
     );
 
-    frame.render_widget(sidebar, chunks[0]);
+    frame.render_widget(sidebar, left_chunks[1]);
 
-    // Task list
+    // 3. Right Column: Task list
     let main_focused = state.focus == Focus::Main;
     let main_style = if main_focused {
         colors.block_focus()
@@ -391,18 +402,7 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
         "All Tasks".to_string()
     };
 
-    let (list_rect, detail_rect) = if chunks[1].width >= 70 {
-        let split = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(68), // Task list (more space)
-                Constraint::Percentage(32), // Task details (shrunk)
-            ])
-            .split(chunks[1]);
-        (split[0], Some(split[1]))
-    } else {
-        (chunks[1], None)
-    };
+    let list_rect = col_chunks[1];
 
     let visible_height = (list_rect.height.saturating_sub(2) as usize).max(1);
     let total_tasks = state.tasks.len();
@@ -524,10 +524,6 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
     );
 
     frame.render_widget(tasks_block, list_rect);
-
-    if let Some(detail_area) = detail_rect {
-        render_task_detail_pane(frame, state, detail_area);
-    }
 }
 
 /// Render the task detail / preview pane
