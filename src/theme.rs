@@ -209,6 +209,12 @@ impl ThemeColors {
         Style::default().fg(self.secondary)
     }
 
+    /// Accent style
+    #[must_use]
+    pub fn text_accent(&self) -> Style {
+        Style::default().fg(self.accent)
+    }
+
     /// Success style
     #[must_use]
     pub fn text_success(&self) -> Style {
