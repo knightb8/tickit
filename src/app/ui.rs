@@ -222,9 +222,35 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
         Span::styled(format!(" ({})", closed_count), colors.text_muted()),
     ])));
 
-    let sidebar = List::new(list_items).block(
+    let total_sidebar_items = list_items.len();
+    let sidebar_height = (chunks[0].height.saturating_sub(2) as usize).max(1);
+    let mut sb_offset = state.sidebar_scroll_offset.get();
+    if state.list_index < sb_offset {
+        sb_offset = state.list_index;
+    } else if state.list_index >= sb_offset + sidebar_height {
+        sb_offset = state.list_index.saturating_sub(sidebar_height - 1);
+    }
+    if total_sidebar_items > 0 && sb_offset >= total_sidebar_items {
+        sb_offset = total_sidebar_items - 1;
+    }
+    state.sidebar_scroll_offset.set(sb_offset);
+
+    let visible_sidebar_items: Vec<ListItem> = list_items
+        .into_iter()
+        .skip(sb_offset)
+        .take(sidebar_height)
+        .collect();
+
+    let sidebar_title = if total_sidebar_items > sidebar_height {
+        let end_idx = (sb_offset + sidebar_height).min(total_sidebar_items);
+        format!(" Lists [{}-{}/{}] ", sb_offset + 1, end_idx, total_sidebar_items)
+    } else {
+        " Lists ".to_string()
+    };
+
+    let sidebar = List::new(visible_sidebar_items).block(
         Block::default()
-            .title(" Lists ")
+            .title(sidebar_title)
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(sidebar_style),
@@ -248,10 +274,39 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
         "All Tasks".to_string()
     };
 
+    let (list_rect, detail_rect) = if chunks[1].width >= 80 {
+        let split = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(55),
+                Constraint::Percentage(45),
+            ])
+            .split(chunks[1]);
+        (split[0], Some(split[1]))
+    } else {
+        (chunks[1], None)
+    };
+
+    let visible_height = (list_rect.height.saturating_sub(2) as usize).max(1);
+    let total_tasks = state.tasks.len();
+
+    let mut offset = state.task_scroll_offset.get();
+    if state.task_index < offset {
+        offset = state.task_index;
+    } else if state.task_index >= offset + visible_height {
+        offset = state.task_index.saturating_sub(visible_height - 1);
+    }
+    if total_tasks > 0 && offset >= total_tasks {
+        offset = total_tasks - 1;
+    }
+    state.task_scroll_offset.set(offset);
+
     let task_items: Vec<ListItem> = state
         .tasks
         .iter()
         .enumerate()
+        .skip(offset)
+        .take(visible_height)
         .map(|(i, task)| {
             let selected = i == state.task_index;
             let base_style = if selected {
@@ -325,26 +380,22 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
     } else {
         " (hiding completed)"
     };
+    let title = if total_tasks > visible_height {
+        let end_idx = (offset + visible_height).min(total_tasks);
+        format!(" {} [{}-{}/{}] {} ", list_name, offset + 1, end_idx, total_tasks, show_status)
+    } else if total_tasks > 0 {
+        format!(" {} [{}] {} ", list_name, total_tasks, show_status)
+    } else {
+        format!(" {} {} ", list_name, show_status)
+    };
+
     let tasks_block = List::new(task_items).block(
         Block::default()
-            .title(format!(" {} {} ", list_name, show_status))
+            .title(title)
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(main_style),
     );
-
-    let (list_rect, detail_rect) = if chunks[1].width >= 80 {
-        let split = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(55),
-                Constraint::Percentage(45),
-            ])
-            .split(chunks[1]);
-        (split[0], Some(split[1]))
-    } else {
-        (chunks[1], None)
-    };
 
     frame.render_widget(tasks_block, list_rect);
 
@@ -473,10 +524,22 @@ fn render_task_detail_pane(frame: &mut Frame, state: &AppState, area: Rect) {
 fn render_lists_view(frame: &mut Frame, state: &AppState, area: Rect) {
     let colors = state.theme.colors();
 
+    let visible_height = (area.height.saturating_sub(2) as usize).max(1);
+    let total_lists = state.lists.len();
+    let mut offset = 0;
+    if state.list_index >= visible_height {
+        offset = state.list_index.saturating_sub(visible_height - 1);
+    }
+    if total_lists > 0 && offset >= total_lists {
+        offset = total_lists - 1;
+    }
+
     let list_items: Vec<ListItem> = state
         .lists
         .iter()
         .enumerate()
+        .skip(offset)
+        .take(visible_height)
         .map(|(i, list)| {
             let selected = i == state.list_index;
             let style = if selected {
@@ -495,9 +558,16 @@ fn render_lists_view(frame: &mut Frame, state: &AppState, area: Rect) {
         })
         .collect();
 
+    let title = if total_lists > visible_height {
+        let end_idx = (offset + visible_height).min(total_lists);
+        format!(" Lists [{}-{}/{}] ", offset + 1, end_idx, total_lists)
+    } else {
+        " Lists ".to_string()
+    };
+
     let lists = List::new(list_items).block(
         Block::default()
-            .title(" Lists ")
+            .title(title)
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(colors.block_focus()),
@@ -510,10 +580,22 @@ fn render_lists_view(frame: &mut Frame, state: &AppState, area: Rect) {
 fn render_tags_view(frame: &mut Frame, state: &AppState, area: Rect) {
     let colors = state.theme.colors();
 
+    let visible_height = (area.height.saturating_sub(2) as usize).max(1);
+    let total_tags = state.tags.len();
+    let mut offset = 0;
+    if state.tag_index >= visible_height {
+        offset = state.tag_index.saturating_sub(visible_height - 1);
+    }
+    if total_tags > 0 && offset >= total_tags {
+        offset = total_tags - 1;
+    }
+
     let tag_items: Vec<ListItem> = state
         .tags
         .iter()
         .enumerate()
+        .skip(offset)
+        .take(visible_height)
         .map(|(i, tag)| {
             let selected = i == state.tag_index;
             let style = if selected {
@@ -532,7 +614,7 @@ fn render_tags_view(frame: &mut Frame, state: &AppState, area: Rect) {
         })
         .collect();
 
-    let content = if tag_items.is_empty() {
+    let content = if state.tags.is_empty() {
         List::new(vec![ListItem::new(Span::styled(
             "  No tags yet. Press 'n' to add one.",
             colors.text_muted(),
@@ -541,9 +623,16 @@ fn render_tags_view(frame: &mut Frame, state: &AppState, area: Rect) {
         List::new(tag_items)
     };
 
+    let title = if total_tags > visible_height {
+        let end_idx = (offset + visible_height).min(total_tags);
+        format!(" Tags [{}-{}/{}] ", offset + 1, end_idx, total_tags)
+    } else {
+        " Tags ".to_string()
+    };
+
     let tags = content.block(
         Block::default()
-            .title(" Tags ")
+            .title(title)
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(colors.block_focus()),

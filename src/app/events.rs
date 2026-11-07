@@ -176,6 +176,48 @@ fn handle_tasks_view(state: &mut AppState, key: KeyEvent) {
         }
 
         // Navigation
+        KeyCode::PageDown | KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            match state.focus {
+                Focus::Sidebar => {
+                    let max_index = state.lists.len();
+                    state.list_index = (state.list_index + 10).min(max_index);
+                }
+                Focus::Main => {
+                    if !state.tasks.is_empty() {
+                        state.task_index = (state.task_index + 15).min(state.tasks.len() - 1);
+                    }
+                }
+            }
+        }
+        KeyCode::PageUp | KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            match state.focus {
+                Focus::Sidebar => {
+                    state.list_index = state.list_index.saturating_sub(10);
+                }
+                Focus::Main => {
+                    state.task_index = state.task_index.saturating_sub(15);
+                }
+            }
+        }
+        KeyCode::PageDown => match state.focus {
+            Focus::Sidebar => {
+                let max_index = state.lists.len();
+                state.list_index = (state.list_index + 10).min(max_index);
+            }
+            Focus::Main => {
+                if !state.tasks.is_empty() {
+                    state.task_index = (state.task_index + 15).min(state.tasks.len() - 1);
+                }
+            }
+        },
+        KeyCode::PageUp => match state.focus {
+            Focus::Sidebar => {
+                state.list_index = state.list_index.saturating_sub(10);
+            }
+            Focus::Main => {
+                state.task_index = state.task_index.saturating_sub(15);
+            }
+        },
         KeyCode::Char('j') | KeyCode::Down => match state.focus {
             Focus::Sidebar => {
                 let max_index = state.lists.len();
@@ -318,6 +360,12 @@ fn handle_lists_view(state: &mut AppState, key: KeyEvent) {
 
     match key.code {
         // Navigation
+        KeyCode::PageDown => {
+            state.list_index = (state.list_index + 10).min(len - 1);
+        }
+        KeyCode::PageUp => {
+            state.list_index = state.list_index.saturating_sub(10);
+        }
         KeyCode::Char('j') | KeyCode::Down => {
             if state.list_index < len - 1 {
                 state.list_index += 1;
@@ -368,6 +416,12 @@ fn handle_tags_view(state: &mut AppState, key: KeyEvent) {
 
     match key.code {
         // Navigation
+        KeyCode::PageDown => {
+            state.tag_index = (state.tag_index + 10).min(len - 1);
+        }
+        KeyCode::PageUp => {
+            state.tag_index = state.tag_index.saturating_sub(10);
+        }
         KeyCode::Char('j') | KeyCode::Down => {
             if state.tag_index < len - 1 {
                 state.tag_index += 1;

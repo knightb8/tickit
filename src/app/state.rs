@@ -1,5 +1,6 @@
 //! Application state management
 
+use std::cell::Cell;
 use anyhow::Result;
 use uuid::Uuid;
 
@@ -269,6 +270,10 @@ pub struct AppState {
     pub last_completed_task: Option<Uuid>,
     /// Whether viewing recently closed tasks
     pub showing_recently_closed: bool,
+    /// Task list scroll offset (first visible item in list)
+    pub task_scroll_offset: Cell<usize>,
+    /// Sidebar list scroll offset
+    pub sidebar_scroll_offset: Cell<usize>,
 }
 
 /// Actions that need confirmation
@@ -332,6 +337,8 @@ impl AppState {
             sync_pending: false,
             last_completed_task: None,
             showing_recently_closed: false,
+            task_scroll_offset: Cell::new(0),
+            sidebar_scroll_offset: Cell::new(0),
         };
 
         state.refresh_data()?;
