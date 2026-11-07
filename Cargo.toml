@@ -47,6 +47,10 @@ path = "src/bin/debug_db.rs"
 name = "tickit"
 path = "src/main.rs"
 
+[[test]]
+name = "quick_dates_and_search"
+path = "tests/quick_dates_and_search.rs"
+
 [dependencies.anyhow]
 version = "1.0"
 

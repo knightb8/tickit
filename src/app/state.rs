@@ -1,7 +1,8 @@
 //! Application state management
 
-use std::cell::Cell;
 use anyhow::Result;
+use chrono::Datelike;
+use std::cell::Cell;
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -100,6 +101,8 @@ pub enum Mode {
     UpdateConfirm,
     /// Update in progress
     Updating,
+    /// Interactive search mode
+    Search,
 }
 
 /// Current view/tab
@@ -247,6 +250,85 @@ impl DueFilter {
     }
 }
 
+/// Due date quick presets
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuickDatePreset {
+    Today,
+    Tomorrow,
+    Weekend,
+    NextWeek,
+    TwoWeeks,
+}
+
+impl QuickDatePreset {
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::Today,
+            Self::Tomorrow,
+            Self::Weekend,
+            Self::NextWeek,
+            Self::TwoWeeks,
+        ]
+    }
+
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::Today => "Today",
+            Self::Tomorrow => "Tomorrow",
+            Self::Weekend => "Weekend",
+            Self::NextWeek => "Next Week",
+            Self::TwoWeeks => "Two Weeks",
+        }
+    }
+
+    pub const fn shortcut_key(&self) -> &'static str {
+        match self {
+            Self::Today => "Alt+1",
+            Self::Tomorrow => "Alt+2",
+            Self::Weekend => "Alt+3",
+            Self::NextWeek => "Alt+4",
+            Self::TwoWeeks => "Alt+5",
+        }
+    }
+
+    pub fn to_date(&self, now: chrono::DateTime<chrono::Utc>) -> chrono::NaiveDate {
+        let today = now.date_naive();
+        match self {
+            Self::Today => today,
+            Self::Tomorrow => today + chrono::Duration::days(1),
+            Self::Weekend => {
+                let days_to_add = match today.weekday() {
+                    chrono::Weekday::Mon => 5,
+                    chrono::Weekday::Tue => 4,
+                    chrono::Weekday::Wed => 3,
+                    chrono::Weekday::Thu => 2,
+                    chrono::Weekday::Fri => 1,
+                    chrono::Weekday::Sat => 7,
+                    chrono::Weekday::Sun => 6,
+                };
+                today + chrono::Duration::days(days_to_add)
+            }
+            Self::NextWeek => {
+                let days_to_add = match today.weekday() {
+                    chrono::Weekday::Mon => 7,
+                    chrono::Weekday::Tue => 6,
+                    chrono::Weekday::Wed => 5,
+                    chrono::Weekday::Thu => 4,
+                    chrono::Weekday::Fri => 3,
+                    chrono::Weekday::Sat => 2,
+                    chrono::Weekday::Sun => 1,
+                };
+                today + chrono::Duration::days(days_to_add)
+            }
+            Self::TwoWeeks => today + chrono::Duration::days(14),
+        }
+    }
+
+    pub fn to_date_string(&self, now: chrono::DateTime<chrono::Utc>) -> String {
+        self.to_date(now).format("%Y-%m-%d").to_string()
+    }
+}
+
 /// Editor field being edited
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EditorField {
@@ -379,6 +461,8 @@ pub struct AppState {
     pub due_filter: DueFilter,
     /// Task counts for each due filter [All, Overdue, Today, ThisWeek, NoDueDate]
     pub due_filter_counts: [usize; 5],
+    /// Active interactive search query
+    pub search_query: String,
 }
 
 /// Actions that need confirmation
@@ -446,6 +530,7 @@ impl AppState {
             sidebar_scroll_offset: Cell::new(0),
             due_filter: DueFilter::default(),
             due_filter_counts: [0; 5],
+            search_query: String::new(),
         };
 
         state.refresh_data()?;
@@ -509,20 +594,52 @@ impl AppState {
         let now = chrono::Utc::now();
         self.due_filter_counts = [
             unfiltered_tasks.len(),
-            unfiltered_tasks.iter().filter(|t| DueFilter::Overdue.matches(t, now)).count(),
-            unfiltered_tasks.iter().filter(|t| DueFilter::Today.matches(t, now)).count(),
-            unfiltered_tasks.iter().filter(|t| DueFilter::ThisWeek.matches(t, now)).count(),
-            unfiltered_tasks.iter().filter(|t| DueFilter::NoDueDate.matches(t, now)).count(),
+            unfiltered_tasks
+                .iter()
+                .filter(|t| DueFilter::Overdue.matches(t, now))
+                .count(),
+            unfiltered_tasks
+                .iter()
+                .filter(|t| DueFilter::Today.matches(t, now))
+                .count(),
+            unfiltered_tasks
+                .iter()
+                .filter(|t| DueFilter::ThisWeek.matches(t, now))
+                .count(),
+            unfiltered_tasks
+                .iter()
+                .filter(|t| DueFilter::NoDueDate.matches(t, now))
+                .count(),
         ];
 
-        self.tasks = if self.due_filter == DueFilter::All {
-            unfiltered_tasks
-        } else {
-            unfiltered_tasks
-                .into_iter()
-                .filter(|t| self.due_filter.matches(t, now))
-                .collect()
+        let q = self.search_query.trim().to_lowercase();
+        let matches_search = |task: &Task| {
+            if q.is_empty() {
+                return true;
+            }
+            let title_match = task.title.to_lowercase().contains(&q);
+            let desc_match = task
+                .description
+                .as_deref()
+                .map(|d| d.to_lowercase().contains(&q))
+                .unwrap_or(false);
+            let tag_match = task.tag_ids.iter().any(|tid| {
+                self.tags
+                    .iter()
+                    .find(|t| t.id == *tid)
+                    .map(|t| t.name.to_lowercase().contains(&q))
+                    .unwrap_or(false)
+            });
+            title_match || desc_match || tag_match
         };
+
+        self.tasks = unfiltered_tasks
+            .into_iter()
+            .filter(|t| {
+                (self.due_filter == DueFilter::All || self.due_filter.matches(t, now))
+                    && matches_search(t)
+            })
+            .collect();
 
         // Clamp task index
         if self.tasks.is_empty() {
@@ -553,6 +670,19 @@ impl AppState {
     /// Set a specific due date filter
     pub fn set_due_filter(&mut self, filter: DueFilter) {
         self.due_filter = filter;
+        self.task_index = 0;
+        self.task_scroll_offset.set(0);
+        let _ = self.refresh_tasks();
+    }
+
+    /// Start search mode
+    pub fn start_search(&mut self) {
+        self.mode = Mode::Search;
+    }
+
+    /// Clear search query and restore all tasks
+    pub fn clear_search(&mut self) {
+        self.search_query.clear();
         self.task_index = 0;
         self.task_scroll_offset.set(0);
         let _ = self.refresh_tasks();
@@ -1101,15 +1231,98 @@ impl AppState {
         self.cursor_pos = self.input_buffer.len();
     }
 
-    /// Parse a due date string (YYYY-MM-DD format) into a DateTime
-    fn parse_due_date(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
-        if s.trim().is_empty() {
+    /// Apply a quick date preset to the editor
+    pub fn apply_quick_date_preset(&mut self, preset: QuickDatePreset) {
+        let now = chrono::Utc::now();
+        let date_str = preset.to_date_string(now);
+        self.input_buffer = date_str.clone();
+        self.editor_due_date_buffer = date_str;
+        self.cursor_pos = self.input_buffer.len();
+    }
+
+    /// Cycle to next quick date preset
+    pub fn cycle_due_date_preset_next(&mut self) {
+        let now = chrono::Utc::now();
+        let all = QuickDatePreset::all();
+        let current_idx = all
+            .iter()
+            .position(|p| p.to_date_string(now) == self.input_buffer.trim());
+        let next_preset = match current_idx {
+            Some(idx) => all[(idx + 1) % all.len()],
+            None => all[0],
+        };
+        self.apply_quick_date_preset(next_preset);
+    }
+
+    /// Cycle to previous quick date preset
+    pub fn cycle_due_date_preset_prev(&mut self) {
+        let now = chrono::Utc::now();
+        let all = QuickDatePreset::all();
+        let current_idx = all
+            .iter()
+            .position(|p| p.to_date_string(now) == self.input_buffer.trim());
+        let prev_preset = match current_idx {
+            Some(idx) => all[(idx + all.len() - 1) % all.len()],
+            None => all[all.len() - 1],
+        };
+        self.apply_quick_date_preset(prev_preset);
+    }
+
+    /// Parse a due date string into a DateTime with explicit reference time
+    pub fn parse_due_date_with_ref(
+        s: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Option<chrono::DateTime<chrono::Utc>> {
+        let trimmed = s.trim().to_lowercase();
+        if trimmed.is_empty() {
             return None;
         }
-        // Parse YYYY-MM-DD format
-        chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d")
-            .ok()
-            .map(|date| date.and_hms_opt(23, 59, 59).unwrap().and_utc())
+
+        match trimmed.as_str() {
+            "today" | "tod" | "t" => Some(
+                QuickDatePreset::Today
+                    .to_date(now)
+                    .and_hms_opt(23, 59, 59)
+                    .unwrap()
+                    .and_utc(),
+            ),
+            "tomorrow" | "tom" | "m" => Some(
+                QuickDatePreset::Tomorrow
+                    .to_date(now)
+                    .and_hms_opt(23, 59, 59)
+                    .unwrap()
+                    .and_utc(),
+            ),
+            "weekend" | "sat" => Some(
+                QuickDatePreset::Weekend
+                    .to_date(now)
+                    .and_hms_opt(23, 59, 59)
+                    .unwrap()
+                    .and_utc(),
+            ),
+            "next week" | "week" | "mon" | "1w" => Some(
+                QuickDatePreset::NextWeek
+                    .to_date(now)
+                    .and_hms_opt(23, 59, 59)
+                    .unwrap()
+                    .and_utc(),
+            ),
+            "two weeks" | "2w" | "2 weeks" => Some(
+                QuickDatePreset::TwoWeeks
+                    .to_date(now)
+                    .and_hms_opt(23, 59, 59)
+                    .unwrap()
+                    .and_utc(),
+            ),
+            _ => chrono::NaiveDate::parse_from_str(&trimmed, "%Y-%m-%d")
+                .ok()
+                .map(|date| date.and_hms_opt(23, 59, 59).unwrap().and_utc()),
+        }
+    }
+
+    /// Parse a due date string (natural language or YYYY-MM-DD format) into a DateTime
+    pub fn parse_due_date(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+        Self::parse_due_date_with_ref(s, chrono::Utc::now())
     }
 
     /// Set update available from background check

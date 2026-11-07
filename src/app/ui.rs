@@ -8,7 +8,9 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Tabs, Wrap},
 };
 
-use super::state::{AppState, DueFilter, EditorField, Focus, Mode, SettingsItem, View};
+use super::state::{
+    AppState, DueFilter, EditorField, Focus, Mode, QuickDatePreset, SettingsItem, View,
+};
 use crate::theme::Theme;
 
 /// ASCII art logo for Tickit (used in help screen)
@@ -321,7 +323,11 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
         let clean_icon = list.icon.replace('\u{fe0f}', "");
         let max_name_len = (left_chunks[1].width.saturating_sub(11) as usize).max(8);
         let display_name = if list.name.chars().count() > max_name_len {
-            let truncated: String = list.name.chars().take(max_name_len.saturating_sub(1)).collect();
+            let truncated: String = list
+                .name
+                .chars()
+                .take(max_name_len.saturating_sub(1))
+                .collect();
             format!("{}…", truncated)
         } else {
             list.name.clone()
@@ -343,7 +349,11 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
     } else {
         colors.text()
     };
-    let closed_count = state.db.get_recently_closed_tasks(100).map(|t| t.len()).unwrap_or(0);
+    let closed_count = state
+        .db
+        .get_recently_closed_tasks(100)
+        .map(|t| t.len())
+        .unwrap_or(0);
     list_items.push(ListItem::new(Line::from(vec![
         Span::styled("  ✓ ", rc_style),
         Span::styled("Recently Closed", rc_style),
@@ -371,7 +381,12 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
 
     let sidebar_title = if total_sidebar_items > sidebar_height {
         let end_idx = (sb_offset + sidebar_height).min(total_sidebar_items);
-        format!(" Lists [{}-{}/{}] ", sb_offset + 1, end_idx, total_sidebar_items)
+        format!(
+            " Lists [{}-{}/{}] ",
+            sb_offset + 1,
+            end_idx,
+            total_sidebar_items
+        )
     } else {
         " Lists ".to_string()
     };
@@ -420,7 +435,10 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
 
     let task_items: Vec<ListItem> = if state.tasks.is_empty() {
         let empty_msg = if state.due_filter != DueFilter::All {
-            format!("  No tasks matching due filter: {}", state.due_filter.name())
+            format!(
+                "  No tasks matching due filter: {}",
+                state.due_filter.name()
+            )
         } else {
             "  No tasks in this list. Press 'n' to add one.".to_string()
         };
@@ -506,13 +524,29 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
     } else {
         " (hiding completed)"
     };
+    let search_tag = if !state.search_query.is_empty() {
+        format!(" [Search: \"{}\"]", state.search_query)
+    } else {
+        String::new()
+    };
     let title = if total_tasks > visible_height {
         let end_idx = (offset + visible_height).min(total_tasks);
-        format!(" {} [{}-{}/{}] {} ", list_name, offset + 1, end_idx, total_tasks, show_status)
+        format!(
+            " {}{} [{}-{}/{}] {} ",
+            list_name,
+            search_tag,
+            offset + 1,
+            end_idx,
+            total_tasks,
+            show_status
+        )
     } else if total_tasks > 0 {
-        format!(" {} [{}] {} ", list_name, total_tasks, show_status)
+        format!(
+            " {}{} [{}] {} ",
+            list_name, search_tag, total_tasks, show_status
+        )
     } else {
-        format!(" {} {} ", list_name, show_status)
+        format!(" {}{} {} ", list_name, search_tag, show_status)
     };
 
     let tasks_block = List::new(task_items).block(
@@ -543,7 +577,10 @@ fn render_task_detail_pane(frame: &mut Frame, state: &AppState, area: Rect) {
 
         // 1. Title
         lines.push(Line::from(vec![
-            Span::styled("Title: ", colors.text_secondary().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Title: ",
+                colors.text_secondary().add_modifier(Modifier::BOLD),
+            ),
             Span::styled(&task.title, colors.text().add_modifier(Modifier::BOLD)),
         ]));
         lines.push(Line::from(""));
@@ -601,7 +638,8 @@ fn render_task_detail_pane(frame: &mut Frame, state: &AppState, area: Rect) {
                 }
                 if let Some(tag) = state.tags.iter().find(|t| t.id == *tag_id) {
                     let tag_color = Color::from_u32(
-                        u32::from_str_radix(tag.color.trim_start_matches('#'), 16).unwrap_or(0x3498db),
+                        u32::from_str_radix(tag.color.trim_start_matches('#'), 16)
+                            .unwrap_or(0x3498db),
                     );
                     tag_spans.push(Span::styled(
                         format!("[{}]", tag.name),
@@ -625,10 +663,16 @@ fn render_task_detail_pane(frame: &mut Frame, state: &AppState, area: Rect) {
                     lines.push(Line::from(Span::styled(line, colors.text())));
                 }
             } else {
-                lines.push(Line::from(Span::styled("(No description provided)", colors.text_muted())));
+                lines.push(Line::from(Span::styled(
+                    "(No description provided)",
+                    colors.text_muted(),
+                )));
             }
         } else {
-            lines.push(Line::from(Span::styled("(No description provided)", colors.text_muted())));
+            lines.push(Line::from(Span::styled(
+                "(No description provided)",
+                colors.text_muted(),
+            )));
         }
 
         let detail_content = Paragraph::new(lines).wrap(Wrap { trim: false });
@@ -786,7 +830,17 @@ fn render_status_bar(frame: &mut Frame, state: &AppState, area: Rect) {
     };
 
     // Render main content
-    let content = if let Some(msg) = &state.status_message {
+    let content = if state.mode == Mode::Search {
+        vec![
+            Span::styled(" / ", colors.text_accent().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                &state.search_query,
+                colors.text().add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("█", colors.text_primary()),
+            Span::styled("  (Enter: keep filter │ Esc: clear)", colors.text_muted()),
+        ]
+    } else if let Some(msg) = &state.status_message {
         vec![
             Span::styled(" ", Style::default()),
             Span::styled(msg, colors.text_secondary()),
@@ -794,6 +848,8 @@ fn render_status_bar(frame: &mut Frame, state: &AppState, area: Rect) {
     } else {
         vec![
             Span::styled(" ", Style::default()),
+            Span::styled("/", colors.key_hint()),
+            Span::styled(": search  ", colors.text_muted()),
             Span::styled("f", colors.key_hint()),
             Span::styled(": due filter  ", colors.text_muted()),
             Span::styled("Tab", colors.key_hint()),
@@ -814,6 +870,13 @@ fn render_status_bar(frame: &mut Frame, state: &AppState, area: Rect) {
     let status =
         Paragraph::new(Line::from(content)).style(Style::default().bg(colors.bg_secondary));
     frame.render_widget(status, content_area);
+
+    if state.mode == Mode::Search {
+        frame.set_cursor_position((
+            content_area.x + 3 + state.search_query.chars().count() as u16,
+            content_area.y,
+        ));
+    }
 
     // Render sync indicator separately (only this part updates during sync)
     if state.is_sync_enabled() {
@@ -942,8 +1005,15 @@ fn render_help_popup(frame: &mut Frame, state: &AppState) {
             Span::styled("Toggle Recently Closed view", colors.text()),
         ]),
         Line::from(vec![
+            Span::styled("  /                  ", colors.key_hint()),
+            Span::styled("Search / filter tasks live", colors.text_accent()),
+        ]),
+        Line::from(vec![
             Span::styled("  f / F  or  [ / ]   ", colors.key_hint()),
-            Span::styled("Cycle due-date filter (All / Overdue / Today / Week / No Date)", colors.text()),
+            Span::styled(
+                "Cycle due-date filter (All / Overdue / Today / Week / No Date)",
+                colors.text(),
+            ),
         ]),
         Line::from(""),
         Line::from(vec![Span::styled(
@@ -1316,7 +1386,7 @@ fn render_task_editor(frame: &mut Frame, state: &AppState) {
         frame.set_cursor_position((chunks[1].x + state.cursor_pos as u16 + 1, chunks[1].y + 1));
     }
 
-    // Due Date field
+    // Due Date field & Quick Presets
     let due_focused = state.editor_field == EditorField::DueDate;
     let due_style = if due_focused {
         colors.block_focus()
@@ -1328,6 +1398,15 @@ fn render_task_editor(frame: &mut Frame, state: &AppState) {
     } else {
         state.editor_due_date_buffer.as_str()
     };
+
+    let due_row = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(16), // text input box for YYYY-MM-DD
+            Constraint::Min(0),     // quick preset badges
+        ])
+        .split(chunks[2]);
+
     let due_placeholder = if due_display.is_empty() {
         "YYYY-MM-DD"
     } else {
@@ -1341,15 +1420,49 @@ fn render_task_editor(frame: &mut Frame, state: &AppState) {
         })
         .block(
             Block::default()
-                .title(" Due Date (optional) ")
+                .title(" Due Date ")
                 .borders(Borders::ALL)
                 .border_style(due_style),
         );
-    frame.render_widget(due_input, chunks[2]);
+    frame.render_widget(due_input, due_row[0]);
 
     if due_focused && !state.editor_adding_tag {
-        frame.set_cursor_position((chunks[2].x + state.cursor_pos as u16 + 1, chunks[2].y + 1));
+        frame.set_cursor_position((due_row[0].x + state.cursor_pos as u16 + 1, due_row[0].y + 1));
     }
+
+    // Render Quick Date Presets
+    let now = chrono::Utc::now();
+    let mut preset_spans = Vec::new();
+    preset_spans.push(Span::raw(" "));
+    for (i, preset) in QuickDatePreset::all().iter().enumerate() {
+        let is_active = preset.to_date_string(now) == due_display.trim();
+        let key_num = i + 1;
+        if is_active {
+            preset_spans.push(Span::styled(
+                format!(" [Alt+{}:{}] ", key_num, preset.label()),
+                colors.selected().add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            preset_spans.push(Span::styled(
+                format!(" [Alt+{}:", key_num),
+                colors.text_muted(),
+            ));
+            preset_spans.push(Span::styled(preset.label(), colors.text_secondary()));
+            preset_spans.push(Span::styled("] ", colors.text_muted()));
+        }
+    }
+
+    let presets_widget = Paragraph::new(Line::from(preset_spans)).block(
+        Block::default()
+            .title(" Quick Presets (Alt+1..5 or ↑↓) ")
+            .borders(Borders::ALL)
+            .border_style(if due_focused {
+                colors.block_focus()
+            } else {
+                colors.block()
+            }),
+    );
+    frame.render_widget(presets_widget, due_row[1]);
 
     // Priority field
     let priority_focused = state.editor_field == EditorField::Priority;
@@ -1469,6 +1582,8 @@ fn render_task_editor(frame: &mut Frame, state: &AppState) {
     // Help text
     let help_text = if state.editor_adding_tag {
         "Enter: save tag │ Esc: cancel"
+    } else if state.editor_field == EditorField::DueDate {
+        "Tab: next field │ Alt+1..5 / ↑↓: presets │ Enter: save │ Esc: cancel"
     } else {
         "Tab: next field │ Enter: save │ Esc: cancel"
     };

@@ -1,9 +1,10 @@
 //! TUI Application module
 
-mod events;
-mod state;
-mod ui;
+pub mod events;
+pub mod state;
+pub mod ui;
 
+pub use events::handle_key;
 pub use state::AppState;
 
 use anyhow::Result;
@@ -161,7 +162,7 @@ fn run_app(
 
             let config = state.config.sync.clone();
             let last_sync = state.db.get_last_sync().ok().flatten();
-            
+
             // Capture local time BEFORE gathering changes.
             // This ensures any changes made during or after sync will be picked up next time,
             // regardless of clock skew between client and server.

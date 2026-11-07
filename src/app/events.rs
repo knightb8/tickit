@@ -2,7 +2,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::state::{AppState, EditorField, Focus, Mode, SettingsItem, View};
+use super::state::{AppState, EditorField, Focus, Mode, QuickDatePreset, SettingsItem, View};
 use crate::theme::Theme;
 
 /// Handle a key event
@@ -58,6 +58,10 @@ pub fn handle_key(state: &mut AppState, key: KeyEvent) {
         }
         Mode::Export => {
             handle_export(state, key);
+            return;
+        }
+        Mode::Search => {
+            handle_search(state, key);
             return;
         }
         Mode::Normal => {}
@@ -146,11 +150,14 @@ pub fn handle_key(state: &mut AppState, key: KeyEvent) {
             state.mode = Mode::About;
             return;
         }
-        // Update (when available)
-        (_, KeyCode::Char('u')) | (_, KeyCode::Char('U')) => {
-            if state.update_available.is_some() {
-                state.mode = Mode::UpdateConfirm;
-            }
+        // Clear active search with Ctrl+u
+        (KeyModifiers::CONTROL, KeyCode::Char('u')) if !state.search_query.is_empty() => {
+            state.clear_search();
+            return;
+        }
+        // Update (when available, press 'U')
+        (_, KeyCode::Char('U')) if state.update_available.is_some() => {
+            state.mode = Mode::UpdateConfirm;
             return;
         }
         _ => {}
@@ -189,6 +196,13 @@ fn handle_tasks_view(state: &mut AppState, key: KeyEvent) {
                 }
             }
         }
+        // Clear active search with Ctrl+u
+        KeyCode::Char('u')
+            if key.modifiers.contains(KeyModifiers::CONTROL) && !state.search_query.is_empty() =>
+        {
+            state.clear_search();
+        }
+
         KeyCode::PageUp | KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             match state.focus {
                 Focus::Sidebar => {
@@ -343,6 +357,16 @@ fn handle_tasks_view(state: &mut AppState, key: KeyEvent) {
         }
         KeyCode::Char('F') | KeyCode::Char('[') => {
             state.prev_due_filter();
+        }
+
+        // Search tasks (/)
+        KeyCode::Char('/') => {
+            state.start_search();
+        }
+
+        // Clear search (Esc)
+        KeyCode::Esc if !state.search_query.is_empty() => {
+            state.clear_search();
         }
 
         _ => {}
@@ -791,6 +815,59 @@ fn handle_task_editor(state: &mut AppState, key: KeyEvent) {
         KeyCode::Tab => state.next_editor_field(),
         KeyCode::BackTab => state.prev_editor_field(),
 
+        // Due date quick presets and cycling
+        KeyCode::Char('1')
+            if state.editor_field == EditorField::DueDate
+                && key.modifiers.contains(KeyModifiers::ALT) =>
+        {
+            state.apply_quick_date_preset(QuickDatePreset::Today);
+        }
+        KeyCode::Char('2')
+            if state.editor_field == EditorField::DueDate
+                && key.modifiers.contains(KeyModifiers::ALT) =>
+        {
+            state.apply_quick_date_preset(QuickDatePreset::Tomorrow);
+        }
+        KeyCode::Char('3')
+            if state.editor_field == EditorField::DueDate
+                && key.modifiers.contains(KeyModifiers::ALT) =>
+        {
+            state.apply_quick_date_preset(QuickDatePreset::Weekend);
+        }
+        KeyCode::Char('4')
+            if state.editor_field == EditorField::DueDate
+                && key.modifiers.contains(KeyModifiers::ALT) =>
+        {
+            state.apply_quick_date_preset(QuickDatePreset::NextWeek);
+        }
+        KeyCode::Char('5')
+            if state.editor_field == EditorField::DueDate
+                && key.modifiers.contains(KeyModifiers::ALT) =>
+        {
+            state.apply_quick_date_preset(QuickDatePreset::TwoWeeks);
+        }
+        KeyCode::F(1) if state.editor_field == EditorField::DueDate => {
+            state.apply_quick_date_preset(QuickDatePreset::Today);
+        }
+        KeyCode::F(2) if state.editor_field == EditorField::DueDate => {
+            state.apply_quick_date_preset(QuickDatePreset::Tomorrow);
+        }
+        KeyCode::F(3) if state.editor_field == EditorField::DueDate => {
+            state.apply_quick_date_preset(QuickDatePreset::Weekend);
+        }
+        KeyCode::F(4) if state.editor_field == EditorField::DueDate => {
+            state.apply_quick_date_preset(QuickDatePreset::NextWeek);
+        }
+        KeyCode::F(5) if state.editor_field == EditorField::DueDate => {
+            state.apply_quick_date_preset(QuickDatePreset::TwoWeeks);
+        }
+        KeyCode::Down | KeyCode::Char('j') if state.editor_field == EditorField::DueDate => {
+            state.cycle_due_date_preset_next();
+        }
+        KeyCode::Up | KeyCode::Char('k') if state.editor_field == EditorField::DueDate => {
+            state.cycle_due_date_preset_prev();
+        }
+
         // Text input for title and description fields
         KeyCode::Char(c) if is_text_field => {
             state.input_buffer.insert(state.cursor_pos, c);
@@ -894,10 +971,8 @@ fn handle_list_editor(state: &mut AppState, key: KeyEvent) {
                 state.cursor_pos -= 1;
             }
         }
-        KeyCode::Right => {
-            if state.cursor_pos < state.input_buffer.len() {
-                state.cursor_pos += 1;
-            }
+        KeyCode::Right if state.cursor_pos < state.input_buffer.len() => {
+            state.cursor_pos += 1;
         }
         _ => {}
     }
@@ -933,10 +1008,8 @@ fn handle_tag_editor(state: &mut AppState, key: KeyEvent) {
                 state.cursor_pos -= 1;
             }
         }
-        KeyCode::Right => {
-            if state.cursor_pos < state.input_buffer.len() {
-                state.cursor_pos += 1;
-            }
+        KeyCode::Right if state.cursor_pos < state.input_buffer.len() => {
+            state.cursor_pos += 1;
         }
         _ => {}
     }
@@ -973,10 +1046,8 @@ fn handle_about(state: &mut AppState, key: KeyEvent) {
             let _ = open::that("https://github.com/ricardodantas/tickit");
         }
         // Handle update from about dialog
-        KeyCode::Char('u') | KeyCode::Char('U') => {
-            if state.update_available.is_some() {
-                state.mode = Mode::UpdateConfirm;
-            }
+        KeyCode::Char('u') | KeyCode::Char('U') if state.update_available.is_some() => {
+            state.mode = Mode::UpdateConfirm;
         }
         _ => {}
     }
@@ -1038,5 +1109,68 @@ fn _old_start_update(state: &mut AppState) {
     state.pending_update = false;
     if let Some(msg) = &state.update_result {
         state.set_status(msg.clone());
+    }
+}
+
+/// Handle interactive search keybindings
+fn handle_search(state: &mut AppState, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            if !state.search_query.is_empty() {
+                state.clear_search();
+            } else {
+                state.mode = Mode::Normal;
+            }
+        }
+        KeyCode::Enter => {
+            state.mode = Mode::Normal;
+        }
+        KeyCode::Backspace => {
+            state.search_query.pop();
+            state.task_index = 0;
+            state.task_scroll_offset.set(0);
+            let _ = state.refresh_tasks();
+        }
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.clear_search();
+        }
+        KeyCode::Up | KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if state.task_index > 0 {
+                state.task_index -= 1;
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if !state.tasks.is_empty() && state.task_index < state.tasks.len() - 1 {
+                state.task_index += 1;
+            }
+        }
+        KeyCode::Up => {
+            if state.task_index > 0 {
+                state.task_index -= 1;
+            }
+        }
+        KeyCode::Down => {
+            if !state.tasks.is_empty() && state.task_index < state.tasks.len() - 1 {
+                state.task_index += 1;
+            }
+        }
+        KeyCode::PageUp => {
+            state.task_index = state.task_index.saturating_sub(10);
+        }
+        KeyCode::PageDown => {
+            if !state.tasks.is_empty() {
+                state.task_index = (state.task_index + 10).min(state.tasks.len() - 1);
+            }
+        }
+        KeyCode::Char(c)
+            if !key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::ALT) =>
+        {
+            state.search_query.push(c);
+            state.task_index = 0;
+            state.task_scroll_offset.set(0);
+            let _ = state.refresh_tasks();
+        }
+        _ => {}
     }
 }
