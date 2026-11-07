@@ -803,6 +803,9 @@ fn handle_task_editor(state: &mut AppState, key: KeyEvent) {
             {
                 state.start_inline_add_tag();
             } else {
+                if state.editor_field == EditorField::DuePresets {
+                    state.activate_current_preset();
+                }
                 let _ = state.save_task();
             }
         }
@@ -814,6 +817,51 @@ fn handle_task_editor(state: &mut AppState, key: KeyEvent) {
         }
         KeyCode::Tab => state.next_editor_field(),
         KeyCode::BackTab => state.prev_editor_field(),
+
+        // Due Date Picker (tag-like picker navigation and plain number buttons)
+        KeyCode::Char('h') | KeyCode::Left if state.editor_field == EditorField::DuePresets => {
+            state.prev_preset_cursor();
+        }
+        KeyCode::Char('l') | KeyCode::Right if state.editor_field == EditorField::DuePresets => {
+            state.next_preset_cursor();
+        }
+        KeyCode::Char('k') | KeyCode::Up if state.editor_field == EditorField::DuePresets => {
+            state.prev_preset_cursor();
+        }
+        KeyCode::Char('j') | KeyCode::Down if state.editor_field == EditorField::DuePresets => {
+            state.next_preset_cursor();
+        }
+        KeyCode::Char(' ') if state.editor_field == EditorField::DuePresets => {
+            state.activate_current_preset();
+        }
+        KeyCode::Char('1') if state.editor_field == EditorField::DuePresets => {
+            state.editor_preset_index = 0;
+            state.activate_current_preset();
+        }
+        KeyCode::Char('2') if state.editor_field == EditorField::DuePresets => {
+            state.editor_preset_index = 1;
+            state.activate_current_preset();
+        }
+        KeyCode::Char('3') if state.editor_field == EditorField::DuePresets => {
+            state.editor_preset_index = 2;
+            state.activate_current_preset();
+        }
+        KeyCode::Char('4') if state.editor_field == EditorField::DuePresets => {
+            state.editor_preset_index = 3;
+            state.activate_current_preset();
+        }
+        KeyCode::Char('5') if state.editor_field == EditorField::DuePresets => {
+            state.editor_preset_index = 4;
+            state.activate_current_preset();
+        }
+        KeyCode::Char('c') | KeyCode::Char('x')
+            if state.editor_field == EditorField::DuePresets =>
+        {
+            state.clear_editor_due_date();
+        }
+        KeyCode::Backspace | KeyCode::Delete if state.editor_field == EditorField::DuePresets => {
+            state.clear_editor_due_date();
+        }
 
         // Due date quick presets and cycling
         KeyCode::Char('1')

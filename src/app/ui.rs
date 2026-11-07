@@ -1386,13 +1386,21 @@ fn render_task_editor(frame: &mut Frame, state: &AppState) {
         frame.set_cursor_position((chunks[1].x + state.cursor_pos as u16 + 1, chunks[1].y + 1));
     }
 
-    // Due Date field & Quick Presets
+    // Due Date field & Quick Presets Picker
     let due_focused = state.editor_field == EditorField::DueDate;
+    let presets_focused = state.editor_field == EditorField::DuePresets;
+
     let due_style = if due_focused {
         colors.block_focus()
     } else {
         colors.block()
     };
+    let presets_style = if presets_focused {
+        colors.block_focus()
+    } else {
+        colors.block()
+    };
+
     let due_display = if due_focused {
         state.input_buffer.as_str()
     } else {
@@ -1403,7 +1411,7 @@ fn render_task_editor(frame: &mut Frame, state: &AppState) {
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Length(16), // text input box for YYYY-MM-DD
-            Constraint::Min(0),     // quick preset badges
+            Constraint::Min(0),     // quick picker
         ])
         .split(chunks[2]);
 
@@ -1430,37 +1438,83 @@ fn render_task_editor(frame: &mut Frame, state: &AppState) {
         frame.set_cursor_position((due_row[0].x + state.cursor_pos as u16 + 1, due_row[0].y + 1));
     }
 
-    // Render Quick Date Presets
+    // Render Tag-like Quick Date Picker
     let now = chrono::Utc::now();
-    let mut preset_spans = Vec::new();
-    preset_spans.push(Span::raw(" "));
+    let mut picker_spans = Vec::new();
+    let is_wide = due_row[1].width >= 62;
+    let is_compact = due_row[1].width < 48;
+
+    picker_spans.push(Span::raw(" "));
     for (i, preset) in QuickDatePreset::all().iter().enumerate() {
-        let is_active = preset.to_date_string(now) == due_display.trim();
-        let key_num = i + 1;
-        if is_active {
-            preset_spans.push(Span::styled(
-                format!(" [Alt+{}:{}] ", key_num, preset.label()),
-                colors.selected().add_modifier(Modifier::BOLD),
-            ));
+        let is_applied = preset.to_date_string(now) == due_display.trim();
+        let is_cursor = presets_focused && state.editor_preset_index == i;
+
+        let marker = if is_cursor { "►" } else { " " };
+        let radio = if is_applied { "◉" } else { "○" };
+        let label = if is_compact {
+            match i {
+                0 => "Tod",
+                1 => "Tom",
+                2 => "Sat",
+                3 => "Mon",
+                4 => "2W",
+                _ => "",
+            }
+        } else if is_wide {
+            preset.label()
         } else {
-            preset_spans.push(Span::styled(
-                format!(" [Alt+{}:", key_num),
-                colors.text_muted(),
-            ));
-            preset_spans.push(Span::styled(preset.label(), colors.text_secondary()));
-            preset_spans.push(Span::styled("] ", colors.text_muted()));
-        }
+            match i {
+                0 => "Today",
+                1 => "Tmrw",
+                2 => "Wknd",
+                3 => "NextWk",
+                4 => "+2W",
+                _ => "",
+            }
+        };
+
+        let style = if is_cursor {
+            colors.selected().add_modifier(Modifier::BOLD)
+        } else if is_applied {
+            colors.text_success()
+        } else {
+            colors.text()
+        };
+
+        picker_spans.push(Span::styled(
+            format!("{}{} {}:{} ", marker, radio, i + 1, label),
+            style,
+        ));
     }
 
-    let presets_widget = Paragraph::new(Line::from(preset_spans)).block(
+    // Clear / None option
+    let is_none_applied = due_display.trim().is_empty();
+    let is_none_cursor = presets_focused && state.editor_preset_index == 5;
+    let none_marker = if is_none_cursor { "►" } else { " " };
+    let none_radio = if is_none_applied { "◉" } else { "○" };
+    let none_style = if is_none_cursor {
+        colors.selected().add_modifier(Modifier::BOLD)
+    } else if is_none_applied {
+        colors.text_muted()
+    } else {
+        colors.text()
+    };
+    picker_spans.push(Span::styled(
+        format!("{}{} c:None", none_marker, none_radio),
+        none_style,
+    ));
+
+    let picker_title = if presets_focused {
+        " Quick Picker (Space: pick, 1-5, ←/→, c: clear) "
+    } else {
+        " Quick Date Picker (Tab to focus) "
+    };
+
+    let presets_widget = Paragraph::new(Line::from(picker_spans)).block(
         Block::default()
-            .title(" Quick Presets (Alt+1..5 or ↑↓) ")
+            .title(picker_title)
             .borders(Borders::ALL)
-            .border_style(if due_focused {
-                colors.block_focus()
-            } else {
-                colors.block()
-            }),
+            .border_style(presets_style),
     );
     frame.render_widget(presets_widget, due_row[1]);
 
@@ -1582,8 +1636,10 @@ fn render_task_editor(frame: &mut Frame, state: &AppState) {
     // Help text
     let help_text = if state.editor_adding_tag {
         "Enter: save tag │ Esc: cancel"
+    } else if state.editor_field == EditorField::DuePresets {
+        "Space: pick date │ 1-5: quick pick │ ←/→: navigate │ c: clear │ Enter: save"
     } else if state.editor_field == EditorField::DueDate {
-        "Tab: next field │ Alt+1..5 / ↑↓: presets │ Enter: save │ Esc: cancel"
+        "Tab: quick picker │ Type date or 'today' │ Enter: save │ Esc: cancel"
     } else {
         "Tab: next field │ Enter: save │ Esc: cancel"
     };

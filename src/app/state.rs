@@ -340,6 +340,7 @@ pub enum EditorField {
     List,
     Tags,
     DueDate,
+    DuePresets,
     Name,
     Icon,
     Color,
@@ -417,6 +418,8 @@ pub struct AppState {
     pub editor_description_buffer: String,
     /// Due date buffer for tasks (YYYY-MM-DD format)
     pub editor_due_date_buffer: String,
+    /// Selected preset cursor index in due date picker (0..5: 0-4 presets, 5 none)
+    pub editor_preset_index: usize,
 
     // UI state
     /// Show completed tasks
@@ -512,6 +515,7 @@ impl AppState {
             editor_title_buffer: String::new(),
             editor_description_buffer: String::new(),
             editor_due_date_buffer: String::new(),
+            editor_preset_index: 0,
             show_completed,
             confirm_message: String::new(),
             confirm_action: None,
@@ -739,6 +743,7 @@ impl AppState {
         self.editor_title_buffer.clear();
         self.editor_description_buffer.clear();
         self.editor_due_date_buffer.clear();
+        self.editor_preset_index = 0;
 
         // Set editor list to current selected list or inbox
         if let Some(list_id) = self.selected_list_id {
@@ -775,6 +780,15 @@ impl AppState {
                 .due_date
                 .map(|dt| dt.format("%Y-%m-%d").to_string())
                 .unwrap_or_default();
+            let now = chrono::Utc::now();
+            self.editor_preset_index = QuickDatePreset::all()
+                .iter()
+                .position(|p| p.to_date_string(now) == self.editor_due_date_buffer.trim())
+                .unwrap_or(if self.editor_due_date_buffer.trim().is_empty() {
+                    5
+                } else {
+                    0
+                });
             self.editing_task = Some(task);
         }
     }
@@ -1179,7 +1193,8 @@ impl AppState {
         self.editor_field = match self.editor_field {
             EditorField::Title => EditorField::Description,
             EditorField::Description => EditorField::DueDate,
-            EditorField::DueDate => EditorField::Priority,
+            EditorField::DueDate => EditorField::DuePresets,
+            EditorField::DuePresets => EditorField::Priority,
             EditorField::Priority => EditorField::List,
             EditorField::List => EditorField::Tags,
             EditorField::Tags => EditorField::Title,
@@ -1196,7 +1211,8 @@ impl AppState {
             EditorField::Title => EditorField::Tags,
             EditorField::Description => EditorField::Title,
             EditorField::DueDate => EditorField::Description,
-            EditorField::Priority => EditorField::DueDate,
+            EditorField::DuePresets => EditorField::DueDate,
+            EditorField::Priority => EditorField::DuePresets,
             EditorField::List => EditorField::Priority,
             EditorField::Tags => EditorField::List,
             _ => EditorField::Title,
@@ -1213,7 +1229,7 @@ impl AppState {
             EditorField::Description => {
                 self.editor_description_buffer = self.input_buffer.clone();
             }
-            EditorField::DueDate => {
+            EditorField::DueDate | EditorField::DuePresets => {
                 self.editor_due_date_buffer = self.input_buffer.clone();
             }
             _ => {}
@@ -1225,10 +1241,42 @@ impl AppState {
         self.input_buffer = match self.editor_field {
             EditorField::Title => self.editor_title_buffer.clone(),
             EditorField::Description => self.editor_description_buffer.clone(),
-            EditorField::DueDate => self.editor_due_date_buffer.clone(),
+            EditorField::DueDate | EditorField::DuePresets => self.editor_due_date_buffer.clone(),
             _ => String::new(),
         };
         self.cursor_pos = self.input_buffer.len();
+    }
+
+    /// Move to next preset cursor in due date picker (0..5)
+    pub fn next_preset_cursor(&mut self) {
+        if self.editor_preset_index < 5 {
+            self.editor_preset_index += 1;
+        }
+    }
+
+    /// Move to previous preset cursor in due date picker (0..5)
+    pub fn prev_preset_cursor(&mut self) {
+        if self.editor_preset_index > 0 {
+            self.editor_preset_index -= 1;
+        }
+    }
+
+    /// Activate/apply the currently highlighted preset in the picker
+    pub fn activate_current_preset(&mut self) {
+        let all = QuickDatePreset::all();
+        if self.editor_preset_index < all.len() {
+            self.apply_quick_date_preset(all[self.editor_preset_index]);
+        } else {
+            self.clear_editor_due_date();
+        }
+    }
+
+    /// Clear due date in editor
+    pub fn clear_editor_due_date(&mut self) {
+        self.input_buffer.clear();
+        self.editor_due_date_buffer.clear();
+        self.cursor_pos = 0;
+        self.editor_preset_index = 5;
     }
 
     /// Apply a quick date preset to the editor
@@ -1238,6 +1286,9 @@ impl AppState {
         self.input_buffer = date_str.clone();
         self.editor_due_date_buffer = date_str;
         self.cursor_pos = self.input_buffer.len();
+        if let Some(idx) = QuickDatePreset::all().iter().position(|&p| p == preset) {
+            self.editor_preset_index = idx;
+        }
     }
 
     /// Cycle to next quick date preset

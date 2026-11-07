@@ -253,6 +253,84 @@ fn test_scenario_a3_keyboard_interaction_in_due_date_field() {
         state.input_buffer,
         QuickDatePreset::TwoWeeks.to_date_string(now)
     );
+
+    // Normal Buttons / Tag-like Picker Navigation without Alt:
+    // Tab from DueDate -> DuePresets
+    handle_key(&mut state, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(state.editor_field, EditorField::DuePresets);
+
+    // Press '1' directly (no Alt) => Today
+    handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
+    );
+    assert_eq!(
+        state.input_buffer,
+        QuickDatePreset::Today.to_date_string(now)
+    );
+    assert_eq!(state.editor_preset_index, 0);
+
+    // Press '2' directly => Tomorrow
+    handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE),
+    );
+    assert_eq!(
+        state.input_buffer,
+        QuickDatePreset::Tomorrow.to_date_string(now)
+    );
+    assert_eq!(state.editor_preset_index, 1);
+
+    // Navigate with Right arrow to index 2 (Weekend) and select with Space
+    handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Right, KeyModifiers::NONE),
+    );
+    assert_eq!(state.editor_preset_index, 2);
+    handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+    );
+    assert_eq!(
+        state.input_buffer,
+        QuickDatePreset::Weekend.to_date_string(now)
+    );
+
+    // Press 'c' to clear date
+    handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
+    );
+    assert_eq!(state.input_buffer, "");
+    assert_eq!(state.editor_preset_index, 5); // None
+
+    // Space on None stays empty
+    handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+    );
+    assert_eq!(state.input_buffer, "");
+
+    // Press '3' directly => Weekend
+    handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE),
+    );
+    assert_eq!(
+        state.input_buffer,
+        QuickDatePreset::Weekend.to_date_string(now)
+    );
+
+    // Shift+Tab back to DueDate text input
+    handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE),
+    );
+    assert_eq!(state.editor_field, EditorField::DueDate);
+    assert_eq!(
+        state.input_buffer,
+        QuickDatePreset::Weekend.to_date_string(now)
+    );
 }
 
 #[test]
