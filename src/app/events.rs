@@ -178,7 +178,8 @@ fn handle_tasks_view(state: &mut AppState, key: KeyEvent) {
         // Navigation
         KeyCode::Char('j') | KeyCode::Down => match state.focus {
             Focus::Sidebar => {
-                if !state.lists.is_empty() && state.list_index < state.lists.len() - 1 {
+                let max_index = state.lists.len();
+                if state.list_index < max_index {
                     state.list_index += 1;
                 }
             }
@@ -206,9 +207,7 @@ fn handle_tasks_view(state: &mut AppState, key: KeyEvent) {
         },
         KeyCode::Char('G') | KeyCode::End => match state.focus {
             Focus::Sidebar => {
-                if !state.lists.is_empty() {
-                    state.list_index = state.lists.len() - 1;
-                }
+                state.list_index = state.lists.len();
             }
             Focus::Main => {
                 if !state.tasks.is_empty() {
@@ -220,7 +219,11 @@ fn handle_tasks_view(state: &mut AppState, key: KeyEvent) {
         // Enter - select list or toggle task
         KeyCode::Enter => match state.focus {
             Focus::Sidebar => {
-                if let Some(list) = state.lists.get(state.list_index) {
+                if state.list_index == state.lists.len() {
+                    state.showing_recently_closed = true;
+                    state.selected_list_id = None;
+                } else if let Some(list) = state.lists.get(state.list_index) {
+                    state.showing_recently_closed = false;
                     // Inbox shows all tasks, other lists show only their tasks
                     if list.is_inbox {
                         state.selected_list_id = None;
@@ -276,6 +279,16 @@ fn handle_tasks_view(state: &mut AppState, key: KeyEvent) {
         KeyCode::Char('r') => {
             let _ = state.refresh_data();
             state.set_status("Refreshed");
+        }
+
+        // Undo last completed task (u)
+        KeyCode::Char('u') => {
+            let _ = state.undo_last_completed();
+        }
+
+        // Toggle recently closed view (R)
+        KeyCode::Char('R') => {
+            let _ = state.toggle_recently_closed();
         }
 
         _ => {}
@@ -691,6 +704,12 @@ fn handle_task_editor(state: &mut AppState, key: KeyEvent) {
                 state.start_inline_add_tag();
             } else {
                 let _ = state.save_task();
+            }
+        }
+        KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            if state.editor_field == EditorField::Description {
+                state.input_buffer.insert(state.cursor_pos, '\n');
+                state.cursor_pos += 1;
             }
         }
         KeyCode::Tab => state.next_editor_field(),

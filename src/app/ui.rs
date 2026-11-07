@@ -206,6 +206,22 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
         ])));
     }
 
+    // Recently closed section in sidebar
+    let rc_selected = state.list_index == state.lists.len();
+    let rc_style = if rc_selected {
+        colors.selected()
+    } else if state.showing_recently_closed {
+        colors.text_accent()
+    } else {
+        colors.text()
+    };
+    let closed_count = state.db.get_recently_closed_tasks(100).map(|t| t.len()).unwrap_or(0);
+    list_items.push(ListItem::new(Line::from(vec![
+        Span::styled("  ✓ ", rc_style),
+        Span::styled("Recently Closed", rc_style),
+        Span::styled(format!(" ({})", closed_count), colors.text_muted()),
+    ])));
+
     let sidebar = List::new(list_items).block(
         Block::default()
             .title(" Lists ")
@@ -224,14 +240,12 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
         colors.block()
     };
 
-    let list_name = if state.list_index == 0 {
-        "All Tasks".to_string()
+    let list_name = if state.showing_recently_closed {
+        "Recently Closed".to_string()
+    } else if let Some(list) = state.selected_list() {
+        list.name.clone()
     } else {
-        state
-            .lists
-            .get(state.list_index - 1)
-            .map(|l| l.name.clone())
-            .unwrap_or_else(|| "Tasks".to_string())
+        "All Tasks".to_string()
     };
 
     let task_items: Vec<ListItem> = state
@@ -319,7 +333,140 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
             .border_style(main_style),
     );
 
-    frame.render_widget(tasks_block, chunks[1]);
+    let (list_rect, detail_rect) = if chunks[1].width >= 80 {
+        let split = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(55),
+                Constraint::Percentage(45),
+            ])
+            .split(chunks[1]);
+        (split[0], Some(split[1]))
+    } else {
+        (chunks[1], None)
+    };
+
+    frame.render_widget(tasks_block, list_rect);
+
+    if let Some(detail_area) = detail_rect {
+        render_task_detail_pane(frame, state, detail_area);
+    }
+}
+
+/// Render the task detail / preview pane
+fn render_task_detail_pane(frame: &mut Frame, state: &AppState, area: Rect) {
+    let colors = state.theme.colors();
+    let detail_block = Block::default()
+        .title(" Task Details ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(colors.block());
+
+    if let Some(task) = state.selected_task() {
+        let inner = detail_block.inner(area);
+        frame.render_widget(detail_block, area);
+
+        let mut lines = Vec::new();
+
+        // 1. Title
+        lines.push(Line::from(vec![
+            Span::styled("Title: ", colors.text_secondary().add_modifier(Modifier::BOLD)),
+            Span::styled(&task.title, colors.text().add_modifier(Modifier::BOLD)),
+        ]));
+        lines.push(Line::from(""));
+
+        // 2. Status & Priority
+        let status_span = if task.completed {
+            Span::styled("✓ Completed", colors.text_success())
+        } else {
+            Span::styled("☐ Pending", colors.text_warning())
+        };
+        let priority_style = colors.priority_style(task.priority);
+        let priority_span = Span::styled(
+            format!("{} {:?}", task.priority.icon(), task.priority),
+            priority_style,
+        );
+
+        lines.push(Line::from(vec![
+            Span::styled("Status: ", colors.text_secondary()),
+            status_span,
+            Span::styled("  |  Priority: ", colors.text_secondary()),
+            priority_span,
+        ]));
+
+        // 3. Completed date (if completed)
+        if let Some(completed_at) = task.completed_at {
+            lines.push(Line::from(vec![
+                Span::styled("Closed at: ", colors.text_secondary()),
+                Span::styled(
+                    completed_at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+                    colors.text_muted(),
+                ),
+            ]));
+        }
+
+        // 4. Due date & URL
+        if let Some(due_date) = task.due_date {
+            lines.push(Line::from(vec![
+                Span::styled("Due date: ", colors.text_secondary()),
+                Span::styled(due_date.format("%Y-%m-%d").to_string(), colors.text_info()),
+            ]));
+        }
+        if let Some(url) = &task.url {
+            lines.push(Line::from(vec![
+                Span::styled("URL: ", colors.text_secondary()),
+                Span::styled(url, colors.text_info()),
+            ]));
+        }
+
+        // 5. Tags
+        if !task.tag_ids.is_empty() {
+            let mut tag_spans = vec![Span::styled("Tags: ", colors.text_secondary())];
+            for (idx, tag_id) in task.tag_ids.iter().enumerate() {
+                if idx > 0 {
+                    tag_spans.push(Span::styled(" ", colors.text()));
+                }
+                if let Some(tag) = state.tags.iter().find(|t| t.id == *tag_id) {
+                    let tag_color = Color::from_u32(
+                        u32::from_str_radix(tag.color.trim_start_matches('#'), 16).unwrap_or(0x3498db),
+                    );
+                    tag_spans.push(Span::styled(
+                        format!("[{}]", tag.name),
+                        Style::default().fg(tag_color).add_modifier(Modifier::BOLD),
+                    ));
+                }
+            }
+            lines.push(Line::from(tag_spans));
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "── Description ─────────────────────────",
+            colors.text_muted(),
+        )));
+
+        // 6. Description
+        if let Some(desc) = &task.description {
+            if !desc.trim().is_empty() {
+                for line in desc.lines() {
+                    lines.push(Line::from(Span::styled(line, colors.text())));
+                }
+            } else {
+                lines.push(Line::from(Span::styled("(No description provided)", colors.text_muted())));
+            }
+        } else {
+            lines.push(Line::from(Span::styled("(No description provided)", colors.text_muted())));
+        }
+
+        let detail_content = Paragraph::new(lines).wrap(Wrap { trim: false });
+        frame.render_widget(detail_content, inner);
+    } else {
+        let empty_msg = Paragraph::new("No task selected")
+            .style(colors.text_muted())
+            .alignment(Alignment::Center)
+            .block(detail_block);
+        frame.render_widget(empty_msg, area);
+    }
 }
 
 /// Render the lists view
@@ -568,6 +715,14 @@ fn render_help_popup(frame: &mut Frame, state: &AppState) {
         Line::from(vec![
             Span::styled("  c                  ", colors.key_hint()),
             Span::styled("Toggle show completed", colors.text()),
+        ]),
+        Line::from(vec![
+            Span::styled("  u                  ", colors.key_hint()),
+            Span::styled("Undo last completed task", colors.text_accent()),
+        ]),
+        Line::from(vec![
+            Span::styled("  R                  ", colors.key_hint()),
+            Span::styled("Toggle Recently Closed view", colors.text()),
         ]),
         Line::from(""),
         Line::from(vec![Span::styled(
@@ -871,11 +1026,11 @@ fn render_task_editor(frame: &mut Frame, state: &AppState) {
         .margin(1)
         .constraints([
             Constraint::Length(3), // Title input
-            Constraint::Length(3), // Description input
+            Constraint::Min(6),    // Description input (multi-line)
             Constraint::Length(3), // Due Date input
             Constraint::Length(3), // Priority
             Constraint::Length(3), // List
-            Constraint::Min(5),    // Tags (expanded)
+            Constraint::Length(5), // Tags (expanded)
             Constraint::Length(1), // Help
         ])
         .split(area);
@@ -919,12 +1074,14 @@ fn render_task_editor(frame: &mut Frame, state: &AppState) {
     } else {
         state.editor_description_buffer.as_str()
     };
-    let desc_input = Paragraph::new(desc_display).block(
-        Block::default()
-            .title(" Description (optional) ")
-            .borders(Borders::ALL)
-            .border_style(desc_style),
-    );
+    let desc_input = Paragraph::new(desc_display)
+        .wrap(Wrap { trim: false })
+        .block(
+            Block::default()
+                .title(" Description (optional - Shift+Enter for newline) ")
+                .borders(Borders::ALL)
+                .border_style(desc_style),
+        );
     frame.render_widget(desc_input, chunks[1]);
 
     if desc_focused && !state.editor_adding_tag {

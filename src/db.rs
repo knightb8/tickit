@@ -515,6 +515,66 @@ impl Database {
         tags.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    /// Get recently closed tasks ordered by completed_at DESC
+    pub fn get_recently_closed_tasks(&self, limit: usize) -> Result<Vec<Task>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM tasks WHERE completed = 1 ORDER BY completed_at DESC, updated_at DESC LIMIT ?1",
+        )?;
+
+        let task_ids: Vec<String> = stmt
+            .query_map(params![limit as i64], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut result = Vec::new();
+        for task_id in task_ids {
+            let mut task_stmt = self.conn.prepare(
+                "SELECT id, title, description, url, priority, completed, list_id, 
+                 created_at, updated_at, completed_at, due_date FROM tasks WHERE id = ?1",
+            )?;
+
+            let task = task_stmt.query_row(params![task_id], |row| {
+                let priority_str: String = row.get(4)?;
+                let priority = match priority_str.as_str() {
+                    "low" => Priority::Low,
+                    "high" => Priority::High,
+                    "urgent" => Priority::Urgent,
+                    _ => Priority::Medium,
+                };
+
+                Ok(Task {
+                    id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
+                    title: row.get(1)?,
+                    description: row.get(2)?,
+                    url: row.get(3)?,
+                    priority,
+                    completed: row.get::<_, i32>(5)? != 0,
+                    list_id: Uuid::parse_str(&row.get::<_, String>(6)?).unwrap(),
+                    tag_ids: Vec::new(),
+                    created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
+                        .unwrap()
+                        .with_timezone(&chrono::Utc),
+                    updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(8)?)
+                        .unwrap()
+                        .with_timezone(&chrono::Utc),
+                    completed_at: row
+                        .get::<_, Option<String>>(9)?
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                        .map(|dt| dt.with_timezone(&chrono::Utc)),
+                    due_date: row
+                        .get::<_, Option<String>>(10)?
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                        .map(|dt| dt.with_timezone(&chrono::Utc)),
+                })
+            })?;
+
+            let mut task = task;
+            task.tag_ids = self.get_task_tags(task.id)?;
+            result.push(task);
+        }
+
+        Ok(result)
+    }
+
     /// Update a task
     pub fn update_task(&self, task: &Task) -> Result<()> {
         self.conn.execute(

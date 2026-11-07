@@ -259,6 +259,12 @@ pub struct AppState {
     pub sync_status: SyncStatus,
     /// Flag to trigger sync after data changes
     pub sync_pending: bool,
+
+    // Undo and recently closed state
+    /// Last completed task ID (for undo)
+    pub last_completed_task: Option<Uuid>,
+    /// Whether viewing recently closed tasks
+    pub showing_recently_closed: bool,
 }
 
 /// Actions that need confirmation
@@ -320,6 +326,8 @@ impl AppState {
             update_result: None,
             sync_status: SyncStatus::default(),
             sync_pending: false,
+            last_completed_task: None,
+            showing_recently_closed: false,
         };
 
         state.refresh_data()?;
@@ -355,6 +363,14 @@ impl AppState {
 
     /// Refresh tasks based on current filter
     pub fn refresh_tasks(&mut self) -> Result<()> {
+        if self.showing_recently_closed {
+            self.tasks = self.db.get_recently_closed_tasks(50)?;
+            if !self.tasks.is_empty() && self.task_index >= self.tasks.len() {
+                self.task_index = self.tasks.len() - 1;
+            }
+            return Ok(());
+        }
+
         let completed_filter = if self.show_completed {
             None
         } else {
@@ -557,14 +573,47 @@ impl AppState {
         if let Some(task) = self.tasks.get_mut(self.task_index) {
             task.toggle();
             self.db.update_task(task)?;
+            if task.completed {
+                self.last_completed_task = Some(task.id);
+            }
             let status = if task.completed {
-                "completed"
+                "Task completed (press 'u' to undo)"
             } else {
-                "reopened"
+                "Task reopened"
             };
-            self.set_status(format!("Task {}", status));
+            self.set_status(status);
             self.refresh_tasks()?;
             self.mark_sync_pending();
+        }
+        Ok(())
+    }
+
+    /// Undo the last completed task
+    pub fn undo_last_completed(&mut self) -> Result<()> {
+        if let Some(task_id) = self.last_completed_task.take() {
+            let tasks = self.db.get_all_tasks()?;
+            if let Some(mut task) = tasks.into_iter().find(|t| t.id == task_id) {
+                task.uncomplete();
+                self.db.update_task(&task)?;
+                self.set_status(format!("↺ Undo: reopened '{}'", task.title));
+                self.refresh_tasks()?;
+                self.mark_sync_pending();
+            }
+        } else {
+            self.set_status("Nothing to undo");
+        }
+        Ok(())
+    }
+
+    /// Toggle recently closed view
+    pub fn toggle_recently_closed(&mut self) -> Result<()> {
+        self.showing_recently_closed = !self.showing_recently_closed;
+        self.task_index = 0;
+        self.refresh_tasks()?;
+        if self.showing_recently_closed {
+            self.set_status("Viewing recently closed tasks (press Space/u to reopen)");
+        } else {
+            self.set_status("Viewing active tasks");
         }
         Ok(())
     }
