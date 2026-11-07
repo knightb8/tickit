@@ -32,6 +32,10 @@ pub struct Config {
     #[serde(default = "default_notifications")]
     pub notifications: bool,
 
+    /// Whether Enter toggles task completion (false: Enter opens/edits, Space/x completes)
+    #[serde(default = "default_enter_completes")]
+    pub enter_completes: bool,
+
     /// Sync configuration (optional)
     #[serde(default)]
     pub sync: SyncConfig,
@@ -71,6 +75,10 @@ fn default_notifications() -> bool {
     true
 }
 
+fn default_enter_completes() -> bool {
+    false
+}
+
 fn default_sync_interval() -> u64 {
     300 // 5 minutes
 }
@@ -84,6 +92,7 @@ impl Default for Config {
             date_format: default_date_format(),
             vim_mode: default_vim_mode(),
             notifications: default_notifications(),
+            enter_completes: default_enter_completes(),
             sync: SyncConfig::default(),
         }
     }

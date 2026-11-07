@@ -19,6 +19,7 @@ pub enum SettingsItem {
     SyncInterval,
     Notifications,
     ShowCompletedDefault,
+    EnterCompletes,
 }
 
 impl SettingsItem {
@@ -31,6 +32,7 @@ impl SettingsItem {
             SettingsItem::SyncInterval,
             SettingsItem::Notifications,
             SettingsItem::ShowCompletedDefault,
+            SettingsItem::EnterCompletes,
         ]
     }
 
@@ -43,6 +45,7 @@ impl SettingsItem {
             SettingsItem::SyncInterval => "Sync Interval",
             SettingsItem::Notifications => "Notifications",
             SettingsItem::ShowCompletedDefault => "Show Completed",
+            SettingsItem::EnterCompletes => "Enter Key Action",
         }
     }
 
@@ -55,6 +58,7 @@ impl SettingsItem {
             SettingsItem::SyncInterval => "⏱️",
             SettingsItem::Notifications => "🔔",
             SettingsItem::ShowCompletedDefault => "✓",
+            SettingsItem::EnterCompletes => "⌨️",
         }
     }
 }

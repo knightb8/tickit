@@ -689,8 +689,12 @@ fn render_help_popup(frame: &mut Frame, state: &AppState) {
             colors.text_primary().add_modifier(Modifier::BOLD),
         )]),
         Line::from(vec![
-            Span::styled("  Enter/Space        ", colors.key_hint()),
+            Span::styled("  Space / x          ", colors.key_hint()),
             Span::styled("Toggle task complete", colors.text()),
+        ]),
+        Line::from(vec![
+            Span::styled("  Enter / e          ", colors.key_hint()),
+            Span::styled("Open / edit task", colors.text()),
         ]),
         Line::from(vec![
             Span::styled("  n                  ", colors.key_hint()),
@@ -970,6 +974,13 @@ fn get_settings_value_display(state: &AppState, item: SettingsItem) -> String {
                 "✓ Show".to_string()
             } else {
                 "✗ Hide".to_string()
+            }
+        }
+        SettingsItem::EnterCompletes => {
+            if state.config.enter_completes {
+                "↵ Enter completes".to_string()
+            } else {
+                "␣ Space / x (Safe)".to_string()
             }
         }
     }

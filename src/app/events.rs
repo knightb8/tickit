@@ -236,7 +236,11 @@ fn handle_tasks_view(state: &mut AppState, key: KeyEvent) {
                 state.focus = Focus::Main;
             }
             Focus::Main => {
-                let _ = state.toggle_task();
+                if state.config.enter_completes {
+                    let _ = state.toggle_task();
+                } else {
+                    state.start_edit_task();
+                }
             }
         },
 
@@ -555,6 +559,16 @@ fn toggle_settings_item(state: &mut AppState) {
                 "hidden"
             };
             state.set_status(format!("Completed tasks {} by default", status));
+        }
+        SettingsItem::EnterCompletes => {
+            state.config.enter_completes = !state.config.enter_completes;
+            let _ = state.config.save();
+            let status = if state.config.enter_completes {
+                "Enter completes task"
+            } else {
+                "Space/x completes task (Enter opens/edits)"
+            };
+            state.set_status(format!("Keybinding: {}", status));
         }
         SettingsItem::SyncServer => {
             // Enter text input mode for server URL
