@@ -108,8 +108,28 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     }
 }
 
-/// Render the tab bar
+const SIDEBAR_WIDTH: u16 = 30;
+
+/// Render the unified top bar: Sections / Views on left, Due Filter on right (when in Tasks view)
 fn render_tabs(frame: &mut Frame, state: &AppState, area: Rect) {
+    if state.view == View::Tasks && area.width >= 75 {
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(SIDEBAR_WIDTH),
+                Constraint::Min(0),
+            ])
+            .split(area);
+
+        render_sections_tabs(frame, state, chunks[0]);
+        render_due_filter_header(frame, state, chunks[1]);
+    } else {
+        render_sections_tabs(frame, state, area);
+    }
+}
+
+/// Render the sections / view tabs
+fn render_sections_tabs(frame: &mut Frame, state: &AppState, area: Rect) {
     let colors = state.theme.colors();
 
     let titles: Vec<Line> = View::all()
@@ -123,7 +143,7 @@ fn render_tabs(frame: &mut Frame, state: &AppState, area: Rect) {
             };
             Line::from(vec![
                 Span::styled(format!(" {} ", i + 1), colors.key_hint()),
-                Span::styled(format!("{} {} ", view.icon(), view.name()), style),
+                Span::styled(format!("{} ", view.name()), style),
             ])
         })
         .collect();
@@ -148,6 +168,93 @@ fn render_tabs(frame: &mut Frame, state: &AppState, area: Rect) {
     frame.render_widget(tabs, area);
 }
 
+fn due_filter_pill_label(filter: DueFilter, count: usize, compact: bool) -> String {
+    if compact {
+        match filter {
+            DueFilter::All => format!("{} All: {}", filter.icon(), count),
+            DueFilter::Overdue => format!("{} Due: {}", filter.icon(), count),
+            DueFilter::Today => format!("{} Today: {}", filter.icon(), count),
+            DueFilter::ThisWeek => format!("{} Wk: {}", filter.icon(), count),
+            DueFilter::NoDueDate => format!("{} None: {}", filter.icon(), count),
+        }
+    } else {
+        match filter {
+            DueFilter::All => format!("{} All ({})", filter.icon(), count),
+            DueFilter::Overdue => format!("{} Overdue ({})", filter.icon(), count),
+            DueFilter::Today => format!("{} Today ({})", filter.icon(), count),
+            DueFilter::ThisWeek => format!("{} This Week ({})", filter.icon(), count),
+            DueFilter::NoDueDate => format!("{} No Date ({})", filter.icon(), count),
+        }
+    }
+}
+
+/// Render the due-ness filter in the unified top bar
+fn render_due_filter_header(frame: &mut Frame, state: &AppState, area: Rect) {
+    let colors = state.theme.colors();
+    let compact = area.width < 90;
+
+    let mut spans = Vec::new();
+    spans.push(Span::raw(" "));
+
+    for (idx, filter) in DueFilter::all().iter().enumerate() {
+        let is_selected = *filter == state.due_filter;
+        let count = state.due_filter_counts.get(idx).copied().unwrap_or(0);
+        let label = due_filter_pill_label(*filter, count, compact);
+
+        let filter_style = if is_selected {
+            match filter {
+                DueFilter::All => colors.selected().add_modifier(Modifier::BOLD),
+                DueFilter::Overdue => Style::default()
+                    .fg(colors.bg)
+                    .bg(colors.error)
+                    .add_modifier(Modifier::BOLD),
+                DueFilter::Today => Style::default()
+                    .fg(colors.bg)
+                    .bg(colors.warning)
+                    .add_modifier(Modifier::BOLD),
+                DueFilter::ThisWeek => Style::default()
+                    .fg(colors.bg)
+                    .bg(colors.info)
+                    .add_modifier(Modifier::BOLD),
+                DueFilter::NoDueDate => Style::default()
+                    .fg(colors.bg)
+                    .bg(colors.secondary)
+                    .add_modifier(Modifier::BOLD),
+            }
+        } else {
+            match filter {
+                DueFilter::Overdue if count > 0 => colors.text_error(),
+                DueFilter::Today if count > 0 => colors.text_warning(),
+                DueFilter::ThisWeek if count > 0 => colors.text_info(),
+                _ => colors.text_muted(),
+            }
+        };
+
+        if is_selected {
+            spans.push(Span::styled(format!(" [ {} ] ", label), filter_style));
+        } else {
+            spans.push(Span::styled(format!("  {}  ", label), filter_style));
+        }
+        spans.push(Span::raw(" "));
+    }
+
+    let header_block = Block::default()
+        .title(" Due Filter [f: cycle / F: prev] ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(if state.due_filter != DueFilter::All {
+            colors.block_focus()
+        } else {
+            colors.block()
+        });
+
+    let p = Paragraph::new(Line::from(spans))
+        .block(header_block)
+        .alignment(Alignment::Left);
+
+    frame.render_widget(p, area);
+}
+
 /// Render the main content area
 fn render_main(frame: &mut Frame, state: &AppState, area: Rect) {
     match state.view {
@@ -164,8 +271,8 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(24), // Sidebar
-            Constraint::Min(0),     // Task list
+            Constraint::Length(SIDEBAR_WIDTH), // Sidebar (30)
+            Constraint::Min(0),                // Task list + details
         ])
         .split(area);
 
@@ -199,9 +306,19 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
                 .get_task_count(list.id, state.show_completed)
                 .unwrap_or(0)
         };
+
+        let clean_icon = list.icon.replace('\u{fe0f}', "");
+        let max_name_len = (chunks[0].width.saturating_sub(11) as usize).max(8);
+        let display_name = if list.name.chars().count() > max_name_len {
+            let truncated: String = list.name.chars().take(max_name_len.saturating_sub(1)).collect();
+            format!("{}…", truncated)
+        } else {
+            list.name.clone()
+        };
+
         list_items.push(ListItem::new(Line::from(vec![
-            Span::styled(format!("  {} ", list.icon), style),
-            Span::styled(&list.name, style),
+            Span::styled(format!("  {} ", clean_icon), style),
+            Span::styled(display_name, style),
             Span::styled(format!(" ({})", count), colors.text_muted()),
         ])));
     }
@@ -274,27 +391,17 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
         "All Tasks".to_string()
     };
 
-    let main_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // Due date filter header
-            Constraint::Min(0),    // Tasks list and details pane
-        ])
-        .split(chunks[1]);
-
-    render_due_filter_header(frame, state, main_chunks[0]);
-
-    let (list_rect, detail_rect) = if main_chunks[1].width >= 80 {
+    let (list_rect, detail_rect) = if chunks[1].width >= 70 {
         let split = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(55),
-                Constraint::Percentage(45),
+                Constraint::Percentage(68), // Task list (more space)
+                Constraint::Percentage(32), // Task details (shrunk)
             ])
-            .split(main_chunks[1]);
+            .split(chunks[1]);
         (split[0], Some(split[1]))
     } else {
-        (main_chunks[1], None)
+        (chunks[1], None)
     };
 
     let visible_height = (list_rect.height.saturating_sub(2) as usize).max(1);
@@ -421,77 +528,6 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
     if let Some(detail_area) = detail_rect {
         render_task_detail_pane(frame, state, detail_area);
     }
-}
-
-/// Render the due-ness filter header section
-fn render_due_filter_header(frame: &mut Frame, state: &AppState, area: Rect) {
-    let colors = state.theme.colors();
-
-    let mut spans = Vec::new();
-    spans.push(Span::raw(" "));
-
-    for (idx, filter) in DueFilter::all().iter().enumerate() {
-        let is_selected = *filter == state.due_filter;
-        let count = state.due_filter_counts.get(idx).copied().unwrap_or(0);
-
-        let filter_style = if is_selected {
-            match filter {
-                DueFilter::All => colors.selected().add_modifier(Modifier::BOLD),
-                DueFilter::Overdue => Style::default()
-                    .fg(colors.bg)
-                    .bg(colors.error)
-                    .add_modifier(Modifier::BOLD),
-                DueFilter::Today => Style::default()
-                    .fg(colors.bg)
-                    .bg(colors.warning)
-                    .add_modifier(Modifier::BOLD),
-                DueFilter::ThisWeek => Style::default()
-                    .fg(colors.bg)
-                    .bg(colors.info)
-                    .add_modifier(Modifier::BOLD),
-                DueFilter::NoDueDate => Style::default()
-                    .fg(colors.bg)
-                    .bg(colors.secondary)
-                    .add_modifier(Modifier::BOLD),
-            }
-        } else {
-            match filter {
-                DueFilter::Overdue if count > 0 => colors.text_error(),
-                DueFilter::Today if count > 0 => colors.text_warning(),
-                DueFilter::ThisWeek if count > 0 => colors.text_info(),
-                _ => colors.text_muted(),
-            }
-        };
-
-        if is_selected {
-            spans.push(Span::styled(
-                format!(" [ {} {} ({}) ] ", filter.icon(), filter.name(), count),
-                filter_style,
-            ));
-        } else {
-            spans.push(Span::styled(
-                format!("  {} {} ({})  ", filter.icon(), filter.name(), count),
-                filter_style,
-            ));
-        }
-        spans.push(Span::raw(" "));
-    }
-
-    let header_block = Block::default()
-        .title(" Due Filter [f: cycle / F: prev] ")
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(if state.due_filter != DueFilter::All {
-            colors.block_focus()
-        } else {
-            colors.block()
-        });
-
-    let p = Paragraph::new(Line::from(spans))
-        .block(header_block)
-        .alignment(Alignment::Left);
-
-    frame.render_widget(p, area);
 }
 
 /// Render the task detail / preview pane
