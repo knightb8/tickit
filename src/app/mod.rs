@@ -89,10 +89,19 @@ fn run_app(
     let (sync_tx, sync_rx) = mpsc::channel::<BackgroundMsg>();
     // Track last sync time for auto-sync interval
     let mut last_sync_attempt = Instant::now();
+    // Track last external database check (CLI or other sessions)
+    let mut last_db_check = Instant::now();
+    let db_check_interval = Duration::from_millis(500);
     // Initial sync on startup if enabled
     let mut needs_initial_sync = state.is_sync_enabled();
 
     loop {
+        // Periodically check for external database changes (from CLI or other sessions)
+        if last_db_check.elapsed() >= db_check_interval {
+            last_db_check = Instant::now();
+            let _ = state.check_external_db_changes();
+        }
+
         // Check for background messages (non-blocking)
         if let Ok(msg) = bg_rx.try_recv() {
             match msg {

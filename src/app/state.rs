@@ -466,6 +466,8 @@ pub struct AppState {
     pub due_filter_counts: [usize; 5],
     /// Active interactive search query
     pub search_query: String,
+    /// SQLite data version counter from last refresh
+    pub last_data_version: i64,
 }
 
 /// Actions that need confirmation
@@ -535,6 +537,7 @@ impl AppState {
             due_filter: DueFilter::default(),
             due_filter_counts: [0; 5],
             search_query: String::new(),
+            last_data_version: 0,
         };
 
         state.refresh_data()?;
@@ -553,6 +556,7 @@ impl AppState {
         self.lists = self.db.get_lists()?;
         self.tags = self.db.get_tags()?;
         self.refresh_tasks()?;
+        self.last_data_version = self.db.get_data_version().unwrap_or(0);
 
         // Clamp indices (no more "All" so max is lists.len() - 1)
         if !self.lists.is_empty() && self.list_index >= self.lists.len() {
@@ -568,8 +572,28 @@ impl AppState {
         Ok(())
     }
 
+    /// Check if the database was modified externally (by another session or CLI)
+    /// and reload data if needed.
+    /// Only reloads if the user is in normal navigation modes (not editing in an open dialog)
+    /// to avoid disrupting ongoing user input.
+    pub fn check_external_db_changes(&mut self) -> Result<bool> {
+        if !matches!(self.mode, Mode::Normal | Mode::Search) {
+            return Ok(false);
+        }
+
+        let current_version = self.db.get_data_version()?;
+        if current_version != self.last_data_version {
+            self.refresh_data()?;
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
     /// Refresh tasks based on current filter
     pub fn refresh_tasks(&mut self) -> Result<()> {
+        let prev_selected_id = self.selected_task().map(|t| t.id);
+
         let unfiltered_tasks = if self.showing_recently_closed {
             self.db.get_recently_closed_tasks(50)?
         } else {
@@ -645,8 +669,12 @@ impl AppState {
             })
             .collect();
 
-        // Clamp task index
-        if self.tasks.is_empty() {
+        // Restore task selection if possible, otherwise clamp
+        if let Some(prev_id) = prev_selected_id
+            && let Some(pos) = self.tasks.iter().position(|t| t.id == prev_id)
+        {
+            self.task_index = pos;
+        } else if self.tasks.is_empty() {
             self.task_index = 0;
         } else if self.task_index >= self.tasks.len() {
             self.task_index = self.tasks.len() - 1;

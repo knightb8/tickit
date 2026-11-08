@@ -48,6 +48,16 @@ impl Database {
         Ok(())
     }
 
+    /// Get SQLite data_version counter.
+    /// This integer is automatically incremented by SQLite whenever any database connection
+    /// commits changes to the database.
+    pub fn get_data_version(&self) -> Result<i64> {
+        let version: i64 = self
+            .conn
+            .query_row("PRAGMA data_version", [], |row| row.get(0))?;
+        Ok(version)
+    }
+
     /// Initialize the database schema
     fn init(&self) -> Result<()> {
         self.conn.execute_batch(

@@ -51,6 +51,10 @@ path = "src/main.rs"
 name = "quick_dates_and_search"
 path = "tests/quick_dates_and_search.rs"
 
+[[test]]
+name = "external_db_sync"
+path = "tests/external_db_sync.rs"
+
 [dependencies.anyhow]
 version = "1.0"
 
