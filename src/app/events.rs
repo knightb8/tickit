@@ -573,31 +573,25 @@ fn handle_settings_input(state: &mut AppState, key: KeyEvent) {
             state.mode = Mode::Settings;
         }
         KeyCode::Backspace => {
-            if state.cursor_pos > 0 {
-                state.input_buffer.remove(state.cursor_pos - 1);
-                state.cursor_pos -= 1;
-            }
+            state.input_backspace();
         }
         KeyCode::Delete => {
-            if state.cursor_pos < state.input_buffer.len() {
-                state.input_buffer.remove(state.cursor_pos);
-            }
+            state.input_delete();
         }
         KeyCode::Left => {
-            state.cursor_pos = state.cursor_pos.saturating_sub(1);
+            state.input_move_left();
         }
         KeyCode::Right => {
-            state.cursor_pos = (state.cursor_pos + 1).min(state.input_buffer.len());
+            state.input_move_right();
         }
         KeyCode::Home => {
-            state.cursor_pos = 0;
+            state.input_move_home();
         }
         KeyCode::End => {
-            state.cursor_pos = state.input_buffer.len();
+            state.input_move_end();
         }
         KeyCode::Char(c) => {
-            state.input_buffer.insert(state.cursor_pos, c);
-            state.cursor_pos += 1;
+            state.input_insert_char(c);
         }
         _ => {}
     }
@@ -811,8 +805,7 @@ fn handle_task_editor(state: &mut AppState, key: KeyEvent) {
         }
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
             if state.editor_field == EditorField::Description {
-                state.input_buffer.insert(state.cursor_pos, '\n');
-                state.cursor_pos += 1;
+                state.input_insert_char('\n');
             }
         }
         KeyCode::Tab => state.next_editor_field(),
@@ -918,35 +911,25 @@ fn handle_task_editor(state: &mut AppState, key: KeyEvent) {
 
         // Text input for title and description fields
         KeyCode::Char(c) if is_text_field => {
-            state.input_buffer.insert(state.cursor_pos, c);
-            state.cursor_pos += 1;
+            state.input_insert_char(c);
         }
         KeyCode::Backspace if is_text_field => {
-            if state.cursor_pos > 0 {
-                state.cursor_pos -= 1;
-                state.input_buffer.remove(state.cursor_pos);
-            }
+            state.input_backspace();
         }
         KeyCode::Delete if is_text_field => {
-            if state.cursor_pos < state.input_buffer.len() {
-                state.input_buffer.remove(state.cursor_pos);
-            }
+            state.input_delete();
         }
         KeyCode::Left if is_text_field => {
-            if state.cursor_pos > 0 {
-                state.cursor_pos -= 1;
-            }
+            state.input_move_left();
         }
         KeyCode::Right if is_text_field => {
-            if state.cursor_pos < state.input_buffer.len() {
-                state.cursor_pos += 1;
-            }
+            state.input_move_right();
         }
         KeyCode::Home if is_text_field => {
-            state.cursor_pos = 0;
+            state.input_move_home();
         }
         KeyCode::End if is_text_field => {
-            state.cursor_pos = state.input_buffer.len();
+            state.input_move_end();
         }
 
         // Priority field
@@ -1000,27 +983,25 @@ fn handle_list_editor(state: &mut AppState, key: KeyEvent) {
             let _ = state.save_list();
         }
         KeyCode::Char(c) => {
-            state.input_buffer.insert(state.cursor_pos, c);
-            state.cursor_pos += 1;
+            state.input_insert_char(c);
         }
         KeyCode::Backspace => {
-            if state.cursor_pos > 0 {
-                state.cursor_pos -= 1;
-                state.input_buffer.remove(state.cursor_pos);
-            }
+            state.input_backspace();
         }
         KeyCode::Delete => {
-            if state.cursor_pos < state.input_buffer.len() {
-                state.input_buffer.remove(state.cursor_pos);
-            }
+            state.input_delete();
         }
         KeyCode::Left => {
-            if state.cursor_pos > 0 {
-                state.cursor_pos -= 1;
-            }
+            state.input_move_left();
         }
-        KeyCode::Right if state.cursor_pos < state.input_buffer.len() => {
-            state.cursor_pos += 1;
+        KeyCode::Right => {
+            state.input_move_right();
+        }
+        KeyCode::Home => {
+            state.input_move_home();
+        }
+        KeyCode::End => {
+            state.input_move_end();
         }
         _ => {}
     }
@@ -1037,27 +1018,25 @@ fn handle_tag_editor(state: &mut AppState, key: KeyEvent) {
             let _ = state.save_tag();
         }
         KeyCode::Char(c) => {
-            state.input_buffer.insert(state.cursor_pos, c);
-            state.cursor_pos += 1;
+            state.input_insert_char(c);
         }
         KeyCode::Backspace => {
-            if state.cursor_pos > 0 {
-                state.cursor_pos -= 1;
-                state.input_buffer.remove(state.cursor_pos);
-            }
+            state.input_backspace();
         }
         KeyCode::Delete => {
-            if state.cursor_pos < state.input_buffer.len() {
-                state.input_buffer.remove(state.cursor_pos);
-            }
+            state.input_delete();
         }
         KeyCode::Left => {
-            if state.cursor_pos > 0 {
-                state.cursor_pos -= 1;
-            }
+            state.input_move_left();
         }
-        KeyCode::Right if state.cursor_pos < state.input_buffer.len() => {
-            state.cursor_pos += 1;
+        KeyCode::Right => {
+            state.input_move_right();
+        }
+        KeyCode::Home => {
+            state.input_move_home();
+        }
+        KeyCode::End => {
+            state.input_move_end();
         }
         _ => {}
     }

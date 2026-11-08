@@ -872,10 +872,8 @@ fn render_status_bar(frame: &mut Frame, state: &AppState, area: Rect) {
     frame.render_widget(status, content_area);
 
     if state.mode == Mode::Search {
-        frame.set_cursor_position((
-            content_area.x + 3 + state.search_query.chars().count() as u16,
-            content_area.y,
-        ));
+        let query_width = unicode_width::UnicodeWidthStr::width(state.search_query.as_str()) as u16;
+        frame.set_cursor_position((content_area.x + 3 + query_width, content_area.y));
     }
 
     // Render sync indicator separately (only this part updates during sync)
@@ -1164,8 +1162,17 @@ fn render_settings_dialog(frame: &mut Frame, state: &AppState) {
             let value_str = if is_editing && state.settings_editing == Some(*item) {
                 let buf = &state.input_buffer;
                 let pos = state.cursor_pos.min(buf.len());
-                let before: String = buf.chars().take(pos).collect();
-                let after: String = buf.chars().skip(pos).collect();
+                let safe_pos = if buf.is_char_boundary(pos) {
+                    pos
+                } else {
+                    buf[..pos]
+                        .char_indices()
+                        .last()
+                        .map(|(i, c)| i + c.len_utf8())
+                        .unwrap_or(0)
+                };
+                let before = &buf[..safe_pos];
+                let after = &buf[safe_pos..];
                 format!("{}▏{}", before, after)
             } else {
                 get_settings_value_display(state, *item)
@@ -1357,7 +1364,8 @@ fn render_task_editor(frame: &mut Frame, state: &AppState) {
     frame.render_widget(title_input, chunks[0]);
 
     if title_focused && !state.editor_adding_tag {
-        frame.set_cursor_position((chunks[0].x + state.cursor_pos as u16 + 1, chunks[0].y + 1));
+        let (col, _) = state.input_cursor_display_offset();
+        frame.set_cursor_position((chunks[0].x + col + 1, chunks[0].y + 1));
     }
 
     // Description field
@@ -1383,7 +1391,8 @@ fn render_task_editor(frame: &mut Frame, state: &AppState) {
     frame.render_widget(desc_input, chunks[1]);
 
     if desc_focused && !state.editor_adding_tag {
-        frame.set_cursor_position((chunks[1].x + state.cursor_pos as u16 + 1, chunks[1].y + 1));
+        let (col, row) = state.input_cursor_display_offset();
+        frame.set_cursor_position((chunks[1].x + col + 1, chunks[1].y + row + 1));
     }
 
     // Due Date field & Quick Presets Picker
@@ -1435,7 +1444,8 @@ fn render_task_editor(frame: &mut Frame, state: &AppState) {
     frame.render_widget(due_input, due_row[0]);
 
     if due_focused && !state.editor_adding_tag {
-        frame.set_cursor_position((due_row[0].x + state.cursor_pos as u16 + 1, due_row[0].y + 1));
+        let (col, _) = state.input_cursor_display_offset();
+        frame.set_cursor_position((due_row[0].x + col + 1, due_row[0].y + 1));
     }
 
     // Render Tag-like Quick Date Picker
@@ -1690,7 +1700,8 @@ fn render_simple_editor(frame: &mut Frame, state: &AppState, item_type: &str) {
     );
     frame.render_widget(input, chunks[0]);
 
-    frame.set_cursor_position((chunks[0].x + state.cursor_pos as u16 + 1, chunks[0].y + 1));
+    let (col, _) = state.input_cursor_display_offset();
+    frame.set_cursor_position((chunks[0].x + col + 1, chunks[0].y + 1));
 
     let help = Paragraph::new("Enter: save │ Esc: cancel")
         .style(colors.text_muted())

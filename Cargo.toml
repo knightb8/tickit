@@ -55,6 +55,10 @@ path = "tests/quick_dates_and_search.rs"
 name = "external_db_sync"
 path = "tests/external_db_sync.rs"
 
+[[test]]
+name = "unicode_input_handling"
+path = "tests/unicode_input_handling.rs"
+
 [dependencies.anyhow]
 version = "1.0"
 
@@ -111,6 +115,9 @@ version = "0.1"
 [dependencies.tracing-subscriber]
 version = "0.3"
 features = ["env-filter"]
+
+[dependencies.unicode-width]
+version = "0.2"
 
 [dependencies.ureq]
 version = "2.10"

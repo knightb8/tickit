@@ -1275,6 +1275,111 @@ impl AppState {
         self.cursor_pos = self.input_buffer.len();
     }
 
+    /// Ensure cursor_pos is within bounds and at a valid char boundary
+    pub fn clamp_cursor(&mut self) {
+        if self.cursor_pos > self.input_buffer.len() {
+            self.cursor_pos = self.input_buffer.len();
+        }
+        while !self.input_buffer.is_char_boundary(self.cursor_pos) {
+            if self.cursor_pos == 0 {
+                break;
+            }
+            self.cursor_pos -= 1;
+        }
+    }
+
+    /// Insert a character at current cursor position and advance cursor safely by c.len_utf8()
+    pub fn input_insert_char(&mut self, c: char) {
+        self.clamp_cursor();
+        self.input_buffer.insert(self.cursor_pos, c);
+        self.cursor_pos += c.len_utf8();
+    }
+
+    /// Insert a string slice at current cursor position
+    pub fn input_insert_str(&mut self, text: &str) {
+        self.clamp_cursor();
+        self.input_buffer.insert_str(self.cursor_pos, text);
+        self.cursor_pos += text.len();
+    }
+
+    /// Delete character before cursor (Backspace)
+    pub fn input_backspace(&mut self) {
+        self.clamp_cursor();
+        if let Some((idx, _)) = self.input_buffer[..self.cursor_pos].char_indices().last() {
+            self.input_buffer.remove(idx);
+            self.cursor_pos = idx;
+        }
+    }
+
+    /// Delete character at cursor (Delete)
+    pub fn input_delete(&mut self) {
+        self.clamp_cursor();
+        if self.cursor_pos < self.input_buffer.len() {
+            self.input_buffer.remove(self.cursor_pos);
+        }
+    }
+
+    /// Move cursor one character to the left
+    pub fn input_move_left(&mut self) {
+        self.clamp_cursor();
+        if let Some((idx, _)) = self.input_buffer[..self.cursor_pos].char_indices().last() {
+            self.cursor_pos = idx;
+        } else {
+            self.cursor_pos = 0;
+        }
+    }
+
+    /// Move cursor one character to the right
+    pub fn input_move_right(&mut self) {
+        self.clamp_cursor();
+        if self.cursor_pos < self.input_buffer.len() {
+            if let Some(ch) = self.input_buffer[self.cursor_pos..].chars().next() {
+                self.cursor_pos += ch.len_utf8();
+            } else {
+                self.cursor_pos = self.input_buffer.len();
+            }
+        }
+    }
+
+    /// Move cursor to the beginning of the input
+    pub fn input_move_home(&mut self) {
+        self.cursor_pos = 0;
+    }
+
+    /// Move cursor to the end of the input
+    pub fn input_move_end(&mut self) {
+        self.cursor_pos = self.input_buffer.len();
+    }
+
+    /// Calculate visual cursor display column and line offset (returns (col_offset, row_offset))
+    pub fn input_cursor_display_offset(&self) -> (u16, u16) {
+        let safe_pos = self.cursor_pos.min(self.input_buffer.len());
+        let before_cursor = if self.input_buffer.is_char_boundary(safe_pos) {
+            &self.input_buffer[..safe_pos]
+        } else {
+            let valid = self.input_buffer[..safe_pos]
+                .char_indices()
+                .last()
+                .map(|(i, c)| i + c.len_utf8())
+                .unwrap_or(0);
+            &self.input_buffer[..valid]
+        };
+
+        if let Some(last_newline) = before_cursor.rfind('\n') {
+            let row = before_cursor.chars().filter(|&c| c == '\n').count() as u16;
+            let current_line = &before_cursor[last_newline + 1..];
+            (
+                unicode_width::UnicodeWidthStr::width(current_line) as u16,
+                row,
+            )
+        } else {
+            (
+                unicode_width::UnicodeWidthStr::width(before_cursor) as u16,
+                0,
+            )
+        }
+    }
+
     /// Move to next preset cursor in due date picker (0..5)
     pub fn next_preset_cursor(&mut self) {
         if self.editor_preset_index < 5 {
