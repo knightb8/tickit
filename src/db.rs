@@ -7,6 +7,16 @@ use uuid::Uuid;
 
 use crate::models::{List, Priority, Tag, Task};
 
+fn parse_uuid_or_fallback(s: &str, fallback: Uuid) -> Uuid {
+    Uuid::parse_str(s).unwrap_or(fallback)
+}
+
+fn parse_datetime_or_now(s: &str) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .unwrap_or_else(|_| chrono::Utc::now())
+}
+
 /// Database connection wrapper
 pub struct Database {
     conn: Connection,
@@ -139,6 +149,19 @@ impl Database {
         // Ensure inbox list exists
         self.ensure_inbox()?;
 
+        // Auto-repair tasks with invalid or legacy list IDs (e.g., literal 'INBOX' or non-UUID strings)
+        let _ = self.conn.execute(
+            r#"
+            UPDATE tasks
+            SET list_id = (SELECT id FROM lists WHERE is_inbox = 1 LIMIT 1)
+            WHERE list_id = 'INBOX'
+               OR list_id = 'inbox'
+               OR length(list_id) != 36
+               OR list_id NOT IN (SELECT id FROM lists);
+            "#,
+            [],
+        );
+
         Ok(())
     }
 
@@ -214,19 +237,15 @@ impl Database {
 
         let lists = stmt.query_map([], |row| {
             Ok(List {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
+                id: parse_uuid_or_fallback(&row.get::<_, String>(0)?, Uuid::new_v4()),
                 name: row.get(1)?,
                 description: row.get(2)?,
                 icon: row.get(3)?,
                 color: row.get(4)?,
                 is_inbox: row.get::<_, i32>(5)? != 0,
                 sort_order: row.get(6)?,
-                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(8)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
+                created_at: parse_datetime_or_now(&row.get::<_, String>(7)?),
+                updated_at: parse_datetime_or_now(&row.get::<_, String>(8)?),
             })
         })?;
 
@@ -242,19 +261,15 @@ impl Database {
 
         stmt.query_row([], |row| {
             Ok(List {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
+                id: parse_uuid_or_fallback(&row.get::<_, String>(0)?, Uuid::new_v4()),
                 name: row.get(1)?,
                 description: row.get(2)?,
                 icon: row.get(3)?,
                 color: row.get(4)?,
                 is_inbox: row.get::<_, i32>(5)? != 0,
                 sort_order: row.get(6)?,
-                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(8)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
+                created_at: parse_datetime_or_now(&row.get::<_, String>(7)?),
+                updated_at: parse_datetime_or_now(&row.get::<_, String>(8)?),
             })
         })
         .map_err(Into::into)
@@ -321,16 +336,14 @@ impl Database {
             .prepare("SELECT id, name, color, created_at, updated_at FROM tags ORDER BY name")?;
 
         let tags = stmt.query_map([], |row| {
-            let created_at = chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(3)?)
-                .unwrap()
-                .with_timezone(&chrono::Utc);
+            let created_at = parse_datetime_or_now(&row.get::<_, String>(3)?);
             let updated_at = row
                 .get::<_, Option<String>>(4)?
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                 .map(|dt| dt.with_timezone(&chrono::Utc))
                 .unwrap_or(created_at);
             Ok(Tag {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
+                id: parse_uuid_or_fallback(&row.get::<_, String>(0)?, Uuid::new_v4()),
                 name: row.get(1)?,
                 color: row.get(2)?,
                 created_at,
@@ -478,20 +491,16 @@ impl Database {
                 };
 
                 Ok(Task {
-                    id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
+                    id: parse_uuid_or_fallback(&row.get::<_, String>(0)?, Uuid::new_v4()),
                     title: row.get(1)?,
                     description: row.get(2)?,
                     url: row.get(3)?,
                     priority,
                     completed: row.get::<_, i32>(5)? != 0,
-                    list_id: Uuid::parse_str(&row.get::<_, String>(6)?).unwrap(),
+                    list_id: parse_uuid_or_fallback(&row.get::<_, String>(6)?, Uuid::nil()),
                     tag_ids: Vec::new(), // Filled below
-                    created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
-                        .unwrap()
-                        .with_timezone(&chrono::Utc),
-                    updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(8)?)
-                        .unwrap()
-                        .with_timezone(&chrono::Utc),
+                    created_at: parse_datetime_or_now(&row.get::<_, String>(7)?),
+                    updated_at: parse_datetime_or_now(&row.get::<_, String>(8)?),
                     completed_at: row
                         .get::<_, Option<String>>(9)?
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
@@ -519,7 +528,10 @@ impl Database {
             .prepare("SELECT tag_id FROM task_tags WHERE task_id = ?1")?;
 
         let tags = stmt.query_map(params![task_id.to_string()], |row| {
-            Ok(Uuid::parse_str(&row.get::<_, String>(0)?).unwrap())
+            Ok(parse_uuid_or_fallback(
+                &row.get::<_, String>(0)?,
+                Uuid::nil(),
+            ))
         })?;
 
         tags.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -552,20 +564,16 @@ impl Database {
                 };
 
                 Ok(Task {
-                    id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
+                    id: parse_uuid_or_fallback(&row.get::<_, String>(0)?, Uuid::new_v4()),
                     title: row.get(1)?,
                     description: row.get(2)?,
                     url: row.get(3)?,
                     priority,
                     completed: row.get::<_, i32>(5)? != 0,
-                    list_id: Uuid::parse_str(&row.get::<_, String>(6)?).unwrap(),
+                    list_id: parse_uuid_or_fallback(&row.get::<_, String>(6)?, Uuid::nil()),
                     tag_ids: Vec::new(),
-                    created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
-                        .unwrap()
-                        .with_timezone(&chrono::Utc),
-                    updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(8)?)
-                        .unwrap()
-                        .with_timezone(&chrono::Utc),
+                    created_at: parse_datetime_or_now(&row.get::<_, String>(7)?),
+                    updated_at: parse_datetime_or_now(&row.get::<_, String>(8)?),
                     completed_at: row
                         .get::<_, Option<String>>(9)?
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
@@ -678,11 +686,9 @@ impl Database {
 
         let rows = stmt.query_map(params![since.to_rfc3339()], |row| {
             Ok((
-                Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
+                parse_uuid_or_fallback(&row.get::<_, String>(0)?, Uuid::nil()),
                 row.get::<_, String>(1)?,
-                chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(2)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
+                parse_datetime_or_now(&row.get::<_, String>(2)?),
             ))
         })?;
 
@@ -697,11 +703,9 @@ impl Database {
 
         let rows = stmt.query_map([], |row| {
             Ok((
-                Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
+                parse_uuid_or_fallback(&row.get::<_, String>(0)?, Uuid::nil()),
                 row.get::<_, String>(1)?,
-                chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(2)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
+                parse_datetime_or_now(&row.get::<_, String>(2)?),
             ))
         })?;
 
@@ -800,14 +804,10 @@ impl Database {
                 url: row.get(3)?,
                 priority,
                 completed: row.get::<_, i32>(5)? != 0,
-                list_id: Uuid::parse_str(&row.get::<_, String>(6)?).unwrap(),
+                list_id: parse_uuid_or_fallback(&row.get::<_, String>(6)?, Uuid::nil()),
                 tag_ids: Vec::new(),
-                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(8)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
+                created_at: parse_datetime_or_now(&row.get::<_, String>(7)?),
+                updated_at: parse_datetime_or_now(&row.get::<_, String>(8)?),
                 completed_at: row
                     .get::<_, Option<String>>(9)?
                     .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
@@ -833,19 +833,15 @@ impl Database {
 
         let lists = stmt.query_map(params![since.to_rfc3339()], |row| {
             Ok(List {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
+                id: parse_uuid_or_fallback(&row.get::<_, String>(0)?, Uuid::new_v4()),
                 name: row.get(1)?,
                 description: row.get(2)?,
                 icon: row.get(3)?,
                 color: row.get(4)?,
                 is_inbox: row.get::<_, i32>(5)? != 0,
                 sort_order: row.get(6)?,
-                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(8)?)
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
+                created_at: parse_datetime_or_now(&row.get::<_, String>(7)?),
+                updated_at: parse_datetime_or_now(&row.get::<_, String>(8)?),
             })
         })?;
 
@@ -859,16 +855,14 @@ impl Database {
         )?;
 
         let tags = stmt.query_map(params![since.to_rfc3339()], |row| {
-            let created_at = chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(3)?)
-                .unwrap()
-                .with_timezone(&chrono::Utc);
+            let created_at = parse_datetime_or_now(&row.get::<_, String>(3)?);
             let updated_at = row
                 .get::<_, Option<String>>(4)?
                 .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
                 .map(|dt| dt.with_timezone(&chrono::Utc))
                 .unwrap_or(created_at);
             Ok(Tag {
-                id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap(),
+                id: parse_uuid_or_fallback(&row.get::<_, String>(0)?, Uuid::new_v4()),
                 name: row.get(1)?,
                 color: row.get(2)?,
                 created_at,
@@ -1060,5 +1054,41 @@ mod tests {
         db.delete_task(tasks[0].id).unwrap();
         let tasks = db.get_tasks_for_list(inbox.id).unwrap();
         assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn test_resilient_to_corrupt_or_legacy_list_id() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.sqlite");
+        let db = Database::open_path(&path).unwrap();
+        let inbox = db.get_inbox().unwrap();
+
+        // Inject row with literal "INBOX" as list_id (e.g. from external tool without foreign keys)
+        db.conn.execute("PRAGMA foreign_keys = OFF;", []).unwrap();
+        db.conn
+            .execute(
+                r#"INSERT INTO tasks (id, title, list_id, priority, completed, created_at, updated_at)
+               VALUES (?1, ?2, ?3, 'medium', 0, ?4, ?5)"#,
+                params![
+                    Uuid::new_v4().to_string(),
+                    "Direct sql injected task with INBOX string",
+                    "INBOX",
+                    chrono::Utc::now().to_rfc3339(),
+                    chrono::Utc::now().to_rfc3339(),
+                ],
+            )
+            .unwrap();
+        db.conn.execute("PRAGMA foreign_keys = ON;", []).unwrap();
+
+        // Querying tasks must NOT panic
+        let tasks = db.get_all_tasks().unwrap();
+        assert_eq!(tasks.len(), 1);
+
+        // Re-opening database must auto-repair the list_id to inbox.id
+        drop(db);
+        let db2 = Database::open_path(&path).unwrap();
+        let tasks2 = db2.get_all_tasks().unwrap();
+        assert_eq!(tasks2.len(), 1);
+        assert_eq!(tasks2[0].list_id, inbox.id);
     }
 }
