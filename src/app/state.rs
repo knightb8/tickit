@@ -773,6 +773,11 @@ impl AppState {
         self.editor_due_date_buffer.clear();
         self.editor_preset_index = 0;
 
+        // Default due date to today when in Today view
+        if self.due_filter == DueFilter::Today {
+            self.editor_due_date_buffer = QuickDatePreset::Today.to_date_string(chrono::Utc::now());
+        }
+
         // Set editor list to current selected list or inbox
         if let Some(list_id) = self.selected_list_id {
             self.editor_list_index = self.lists.iter().position(|l| l.id == list_id).unwrap_or(0);

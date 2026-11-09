@@ -479,3 +479,33 @@ fn test_scenario_b4_search_shortcuts_ctrl_u() {
     assert_eq!(state.search_query, "");
     assert_eq!(state.tasks.len(), 2);
 }
+
+#[test]
+fn test_default_date_is_today_when_in_today_view() {
+    let (mut state, _dir) = create_test_app();
+    let today_str = QuickDatePreset::Today.to_date_string(Utc::now());
+
+    // In All view: adding a task should have no due date by default
+    state.start_add_task();
+    assert_eq!(state.editor_due_date_buffer, "");
+    state.mode = Mode::Normal;
+
+    // Switch due filter to Today view
+    state.due_filter = tickit::app::state::DueFilter::Today;
+    state.refresh_tasks().unwrap();
+
+    // Start adding a task while in Today view
+    state.start_add_task();
+    assert_eq!(state.editor_due_date_buffer, today_str);
+
+    // Save task with title "Task for today"
+    state.input_buffer = "Task for today".to_string();
+    state.save_task().unwrap();
+
+    // Verify task was created with today's date and is visible in Today view
+    assert_eq!(state.tasks.len(), 1);
+    assert_eq!(state.tasks[0].title, "Task for today");
+    assert!(state.tasks[0].due_date.is_some());
+    let task_due = state.tasks[0].due_date.unwrap().date_naive();
+    assert_eq!(task_due, Utc::now().date_naive());
+}
