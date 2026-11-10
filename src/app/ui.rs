@@ -301,12 +301,23 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
 
     // Lists (no more "All" - Inbox shows all tasks)
     for (i, list) in state.lists.iter().enumerate() {
-        let selected = state.list_index == i;
-        let style = if selected {
+        let is_cursor = state.list_index == i;
+        let is_active = if state.showing_recently_closed {
+            false
+        } else if let Some(sel_id) = state.selected_list_id {
+            list.id == sel_id
+        } else {
+            list.is_inbox
+        };
+        let style = if is_cursor && sidebar_focused {
             colors.selected()
+        } else if is_active {
+            colors.text_accent().add_modifier(Modifier::BOLD)
         } else {
             colors.text()
         };
+        let prefix = if is_active { "▸ " } else { "  " };
+
         // Inbox shows total task count (all tasks), other lists show their own count
         let count = if list.is_inbox {
             state
@@ -334,28 +345,30 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
         };
 
         list_items.push(ListItem::new(Line::from(vec![
-            Span::styled(format!("  {} ", clean_icon), style),
+            Span::styled(format!("{}{} ", prefix, clean_icon), style),
             Span::styled(display_name, style),
             Span::styled(format!(" ({})", count), colors.text_muted()),
         ])));
     }
 
     // Recently closed section in sidebar
-    let rc_selected = state.list_index == state.lists.len();
-    let rc_style = if rc_selected {
+    let rc_cursor = state.list_index == state.lists.len();
+    let rc_active = state.showing_recently_closed;
+    let rc_style = if rc_cursor && sidebar_focused {
         colors.selected()
-    } else if state.showing_recently_closed {
-        colors.text_accent()
+    } else if rc_active {
+        colors.text_accent().add_modifier(Modifier::BOLD)
     } else {
         colors.text()
     };
+    let rc_prefix = if rc_active { "▸ " } else { "  " };
     let closed_count = state
         .db
         .get_recently_closed_tasks(100)
         .map(|t| t.len())
         .unwrap_or(0);
     list_items.push(ListItem::new(Line::from(vec![
-        Span::styled("  ✓ ", rc_style),
+        Span::styled(format!("{}✓ ", rc_prefix), rc_style),
         Span::styled("Recently Closed", rc_style),
         Span::styled(format!(" ({})", closed_count), colors.text_muted()),
     ])));
@@ -379,16 +392,28 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
         .take(sidebar_height)
         .collect();
 
-    let sidebar_title = if total_sidebar_items > sidebar_height {
+    let sidebar_title = if sidebar_focused {
+        if total_sidebar_items > sidebar_height {
+            let end_idx = (sb_offset + sidebar_height).min(total_sidebar_items);
+            format!(
+                " Lists [{}-{}/{} │ ↑/↓: filter, →/Enter: tasks] ",
+                sb_offset + 1,
+                end_idx,
+                total_sidebar_items
+            )
+        } else {
+            " Lists [↑/↓: filter │ →/Enter: tasks] ".to_string()
+        }
+    } else if total_sidebar_items > sidebar_height {
         let end_idx = (sb_offset + sidebar_height).min(total_sidebar_items);
         format!(
-            " Lists [{}-{}/{}] ",
+            " Lists [{}-{}/{} │ h/←: focus] ",
             sb_offset + 1,
             end_idx,
             total_sidebar_items
         )
     } else {
-        " Lists ".to_string()
+        " Lists [h/←: focus] ".to_string()
     };
 
     let sidebar = List::new(visible_sidebar_items).block(
@@ -412,7 +437,11 @@ fn render_tasks_view(frame: &mut Frame, state: &AppState, area: Rect) {
     let list_name = if state.showing_recently_closed {
         "Recently Closed".to_string()
     } else if let Some(list) = state.selected_list() {
-        list.name.clone()
+        if list.is_inbox {
+            "Inbox (All Tasks)".to_string()
+        } else {
+            list.name.clone()
+        }
     } else {
         "All Tasks".to_string()
     };

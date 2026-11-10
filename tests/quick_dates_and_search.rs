@@ -509,3 +509,66 @@ fn test_default_date_is_today_when_in_today_view() {
     let task_due = state.tasks[0].due_date.unwrap().date_naive();
     assert_eq!(task_due, Utc::now().date_naive());
 }
+
+#[test]
+fn test_sidebar_live_list_filtering() {
+    let (mut state, _dir) = create_test_app();
+
+    // Create a new list "Work"
+    let work_list = tickit::models::List::new("Work");
+    state.db.insert_list(&work_list).unwrap();
+    state.refresh_data().unwrap();
+
+    let inbox = state.db.get_inbox().unwrap();
+
+    // Add 1 task to Inbox, 1 task to Work
+    let task_inbox = Task::new("Inbox task", inbox.id);
+    let task_work = Task::new("Work task", work_list.id);
+    state.db.insert_task(&task_inbox).unwrap();
+    state.db.insert_task(&task_work).unwrap();
+    state.refresh_data().unwrap();
+
+    // In All/Inbox: all 2 tasks should be present
+    assert_eq!(state.tasks.len(), 2);
+
+    // Switch focus to Sidebar (press 'h')
+    handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
+    );
+    assert_eq!(state.focus, tickit::app::state::Focus::Sidebar);
+
+    // Navigate down to Work list (press 'j')
+    handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+    );
+    assert_eq!(state.list_index, 1);
+    assert_eq!(state.selected_list_id, Some(work_list.id));
+    // Live filter! Only Work tasks are now shown in state.tasks
+    assert_eq!(state.tasks.len(), 1);
+    assert_eq!(state.tasks[0].title, "Work task");
+
+    // Press Enter to move focus to Main task list
+    handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    );
+    assert_eq!(state.focus, tickit::app::state::Focus::Main);
+    assert_eq!(state.tasks.len(), 1);
+    assert_eq!(state.tasks[0].title, "Work task");
+
+    // Switch back to Sidebar (press 'h') and move up to Inbox (press 'k')
+    handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
+    );
+    handle_key(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
+    );
+    assert_eq!(state.list_index, 0);
+    assert_eq!(state.selected_list_id, None);
+    // Live filter restores all tasks
+    assert_eq!(state.tasks.len(), 2);
+}

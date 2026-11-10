@@ -727,7 +727,33 @@ impl AppState {
 
     /// Get the currently selected list
     pub fn selected_list(&self) -> Option<&List> {
-        self.lists.get(self.list_index)
+        if self.showing_recently_closed {
+            None
+        } else if let Some(id) = self.selected_list_id {
+            self.lists.iter().find(|l| l.id == id)
+        } else {
+            self.lists.get(self.list_index)
+        }
+    }
+
+    /// Update the selected sidebar list and refresh tasks live
+    pub fn select_sidebar_index(&mut self, index: usize) {
+        let max_index = self.lists.len();
+        self.list_index = index.min(max_index);
+        if self.list_index == self.lists.len() {
+            self.showing_recently_closed = true;
+            self.selected_list_id = None;
+        } else if let Some(list) = self.lists.get(self.list_index) {
+            self.showing_recently_closed = false;
+            if list.is_inbox {
+                self.selected_list_id = None;
+            } else {
+                self.selected_list_id = Some(list.id);
+            }
+        }
+        self.task_index = 0;
+        self.task_scroll_offset.set(0);
+        let _ = self.refresh_tasks();
     }
 
     /// Get the currently selected tag

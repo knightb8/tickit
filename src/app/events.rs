@@ -187,7 +187,8 @@ fn handle_tasks_view(state: &mut AppState, key: KeyEvent) {
             match state.focus {
                 Focus::Sidebar => {
                     let max_index = state.lists.len();
-                    state.list_index = (state.list_index + 10).min(max_index);
+                    let new_index = (state.list_index + 10).min(max_index);
+                    state.select_sidebar_index(new_index);
                 }
                 Focus::Main => {
                     if !state.tasks.is_empty() {
@@ -206,7 +207,8 @@ fn handle_tasks_view(state: &mut AppState, key: KeyEvent) {
         KeyCode::PageUp | KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             match state.focus {
                 Focus::Sidebar => {
-                    state.list_index = state.list_index.saturating_sub(10);
+                    let new_index = state.list_index.saturating_sub(10);
+                    state.select_sidebar_index(new_index);
                 }
                 Focus::Main => {
                     state.task_index = state.task_index.saturating_sub(15);
@@ -216,7 +218,8 @@ fn handle_tasks_view(state: &mut AppState, key: KeyEvent) {
         KeyCode::PageDown => match state.focus {
             Focus::Sidebar => {
                 let max_index = state.lists.len();
-                state.list_index = (state.list_index + 10).min(max_index);
+                let new_index = (state.list_index + 10).min(max_index);
+                state.select_sidebar_index(new_index);
             }
             Focus::Main => {
                 if !state.tasks.is_empty() {
@@ -226,7 +229,8 @@ fn handle_tasks_view(state: &mut AppState, key: KeyEvent) {
         },
         KeyCode::PageUp => match state.focus {
             Focus::Sidebar => {
-                state.list_index = state.list_index.saturating_sub(10);
+                let new_index = state.list_index.saturating_sub(10);
+                state.select_sidebar_index(new_index);
             }
             Focus::Main => {
                 state.task_index = state.task_index.saturating_sub(15);
@@ -236,7 +240,7 @@ fn handle_tasks_view(state: &mut AppState, key: KeyEvent) {
             Focus::Sidebar => {
                 let max_index = state.lists.len();
                 if state.list_index < max_index {
-                    state.list_index += 1;
+                    state.select_sidebar_index(state.list_index + 1);
                 }
             }
             Focus::Main => {
@@ -248,7 +252,7 @@ fn handle_tasks_view(state: &mut AppState, key: KeyEvent) {
         KeyCode::Char('k') | KeyCode::Up => match state.focus {
             Focus::Sidebar => {
                 if state.list_index > 0 {
-                    state.list_index -= 1;
+                    state.select_sidebar_index(state.list_index - 1);
                 }
             }
             Focus::Main => {
@@ -258,12 +262,13 @@ fn handle_tasks_view(state: &mut AppState, key: KeyEvent) {
             }
         },
         KeyCode::Char('g') | KeyCode::Home => match state.focus {
-            Focus::Sidebar => state.list_index = 0,
+            Focus::Sidebar => state.select_sidebar_index(0),
             Focus::Main => state.task_index = 0,
         },
         KeyCode::Char('G') | KeyCode::End => match state.focus {
             Focus::Sidebar => {
-                state.list_index = state.lists.len();
+                let max_index = state.lists.len();
+                state.select_sidebar_index(max_index);
             }
             Focus::Main => {
                 if !state.tasks.is_empty() {
@@ -275,20 +280,7 @@ fn handle_tasks_view(state: &mut AppState, key: KeyEvent) {
         // Enter - select list or toggle task
         KeyCode::Enter => match state.focus {
             Focus::Sidebar => {
-                if state.list_index == state.lists.len() {
-                    state.showing_recently_closed = true;
-                    state.selected_list_id = None;
-                } else if let Some(list) = state.lists.get(state.list_index) {
-                    state.showing_recently_closed = false;
-                    // Inbox shows all tasks, other lists show only their tasks
-                    if list.is_inbox {
-                        state.selected_list_id = None;
-                    } else {
-                        state.selected_list_id = Some(list.id);
-                    }
-                }
-                let _ = state.refresh_tasks();
-                state.task_index = 0;
+                state.select_sidebar_index(state.list_index);
                 state.focus = Focus::Main;
             }
             Focus::Main => {
@@ -299,6 +291,12 @@ fn handle_tasks_view(state: &mut AppState, key: KeyEvent) {
                 }
             }
         },
+
+        // Space in sidebar moves to main
+        KeyCode::Char(' ') if state.focus == Focus::Sidebar => {
+            state.select_sidebar_index(state.list_index);
+            state.focus = Focus::Main;
+        }
 
         // Space or x - toggle task completion
         KeyCode::Char(' ') | KeyCode::Char('x') if state.focus == Focus::Main => {
