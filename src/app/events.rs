@@ -2,7 +2,9 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::state::{AppState, EditorField, Focus, Mode, QuickDatePreset, SettingsItem, View};
+use super::state::{
+    AppState, EditorField, Focus, Mode, QuickDatePreset, SettingsCategory, SettingsItem, View,
+};
 use crate::theme::Theme;
 
 /// Handle a key event
@@ -85,39 +87,12 @@ pub fn handle_key(state: &mut AppState, key: KeyEvent) {
             state.show_help = true;
             return;
         }
-        // Tab between views
-        (_, KeyCode::Tab) => {
-            state.view = match state.view {
-                View::Tasks => View::Lists,
-                View::Lists => View::Tags,
-                View::Tags => View::Tasks,
+        // Tab toggles focus between sidebar and main task list
+        (_, KeyCode::Tab) | (KeyModifiers::SHIFT, KeyCode::BackTab) => {
+            state.focus = match state.focus {
+                Focus::Sidebar => Focus::Main,
+                Focus::Main => Focus::Sidebar,
             };
-            state.focus = Focus::Main;
-            return;
-        }
-        (KeyModifiers::SHIFT, KeyCode::BackTab) => {
-            state.view = match state.view {
-                View::Tasks => View::Tags,
-                View::Lists => View::Tasks,
-                View::Tags => View::Lists,
-            };
-            state.focus = Focus::Main;
-            return;
-        }
-        // Number keys for quick navigation (like Hazelnut)
-        (_, KeyCode::Char('1')) => {
-            state.view = View::Tasks;
-            state.focus = Focus::Main;
-            return;
-        }
-        (_, KeyCode::Char('2')) => {
-            state.view = View::Lists;
-            state.focus = Focus::Main;
-            return;
-        }
-        (_, KeyCode::Char('3')) => {
-            state.view = View::Tags;
-            state.focus = Focus::Main;
             return;
         }
         // Theme picker (just 't', like Hazelnut/Feedo)
@@ -142,12 +117,15 @@ pub fn handle_key(state: &mut AppState, key: KeyEvent) {
         // Settings dialog (s like Hazelnut)
         (_, KeyCode::Char('s')) => {
             state.settings_index = 0;
+            state.settings_category = SettingsCategory::Appearance;
             state.mode = Mode::Settings;
             return;
         }
         // About dialog (A like Hazelnut)
         (_, KeyCode::Char('A')) => {
-            state.mode = Mode::About;
+            state.settings_index = 0;
+            state.settings_category = SettingsCategory::About;
+            state.mode = Mode::Settings;
             return;
         }
         // Clear active search with Ctrl+u
@@ -483,38 +461,141 @@ fn handle_tags_view(state: &mut AppState, key: KeyEvent) {
     }
 }
 
-/// Handle theme picker (like Hazelnut)
-/// Handle settings dialog
+/// Handle settings dialog (tuios style)
 fn handle_settings(state: &mut AppState, key: KeyEvent) {
-    let items = SettingsItem::all();
-    let len = items.len();
-
     match key.code {
         KeyCode::Esc => {
             state.mode = Mode::Normal;
+            return;
         }
-        KeyCode::Down | KeyCode::Char('j') => {
-            state.settings_index = (state.settings_index + 1) % len;
-        }
-        KeyCode::Up | KeyCode::Char('k') => {
-            state.settings_index = state.settings_index.checked_sub(1).unwrap_or(len - 1);
-        }
-        KeyCode::Home | KeyCode::Char('g') => {
+        // Category switching
+        KeyCode::Tab | KeyCode::Char(']') => {
+            state.settings_category = state.settings_category.next();
             state.settings_index = 0;
+            return;
         }
-        KeyCode::End | KeyCode::Char('G') => {
-            state.settings_index = len - 1;
-        }
-        KeyCode::Enter | KeyCode::Char(' ') => {
-            toggle_settings_item(state);
-        }
-        KeyCode::Left | KeyCode::Char('h') => {
-            adjust_settings_item(state, -1);
-        }
-        KeyCode::Right | KeyCode::Char('l') => {
-            adjust_settings_item(state, 1);
+        KeyCode::BackTab | KeyCode::Char('[') => {
+            state.settings_category = state.settings_category.prev();
+            state.settings_index = 0;
+            return;
         }
         _ => {}
+    }
+
+    match state.settings_category {
+        SettingsCategory::Appearance | SettingsCategory::Behavior | SettingsCategory::Sync => {
+            let items = state.settings_category.items();
+            let len = items.len();
+            if len == 0 {
+                return;
+            }
+
+            match key.code {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    state.settings_index = (state.settings_index + 1) % len;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    state.settings_index = state.settings_index.checked_sub(1).unwrap_or(len - 1);
+                }
+                KeyCode::Home | KeyCode::Char('g') => {
+                    state.settings_index = 0;
+                }
+                KeyCode::End | KeyCode::Char('G') => {
+                    state.settings_index = len - 1;
+                }
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    toggle_settings_item(state);
+                }
+                KeyCode::Left | KeyCode::Char('h') => {
+                    adjust_settings_item(state, -1);
+                }
+                KeyCode::Right | KeyCode::Char('l') => {
+                    adjust_settings_item(state, 1);
+                }
+                _ => {}
+            }
+        }
+        SettingsCategory::Lists => {
+            let len = state.lists.len();
+            match key.code {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if len > 0 {
+                        state.list_index = (state.list_index + 1) % len;
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if len > 0 {
+                        state.list_index = state.list_index.checked_sub(1).unwrap_or(len - 1);
+                    }
+                }
+                KeyCode::Home | KeyCode::Char('g') => {
+                    state.list_index = 0;
+                }
+                KeyCode::End | KeyCode::Char('G') => {
+                    if len > 0 {
+                        state.list_index = len - 1;
+                    }
+                }
+                KeyCode::Char('a') => {
+                    state.return_to_settings = true;
+                    state.start_add_list();
+                }
+                KeyCode::Char('e') | KeyCode::Enter => {
+                    state.return_to_settings = true;
+                    state.start_edit_list();
+                }
+                KeyCode::Char('d') => {
+                    state.return_to_settings = true;
+                    state.confirm_delete_list();
+                }
+                _ => {}
+            }
+        }
+        SettingsCategory::Tags => {
+            let len = state.tags.len();
+            match key.code {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if len > 0 {
+                        state.tag_index = (state.tag_index + 1) % len;
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if len > 0 {
+                        state.tag_index = state.tag_index.checked_sub(1).unwrap_or(len - 1);
+                    }
+                }
+                KeyCode::Home | KeyCode::Char('g') => {
+                    state.tag_index = 0;
+                }
+                KeyCode::End | KeyCode::Char('G') => {
+                    if len > 0 {
+                        state.tag_index = len - 1;
+                    }
+                }
+                KeyCode::Char('a') => {
+                    state.return_to_settings = true;
+                    state.start_add_tag();
+                }
+                KeyCode::Char('e') | KeyCode::Enter => {
+                    state.return_to_settings = true;
+                    state.start_edit_tag();
+                }
+                KeyCode::Char('d') => {
+                    state.return_to_settings = true;
+                    state.confirm_delete_tag();
+                }
+                _ => {}
+            }
+        }
+        SettingsCategory::About => {
+            if key.code == KeyCode::Char('g') || key.code == KeyCode::Char('G') {
+                let _ = open::that("https://github.com/ricardodantas/tickit");
+            } else if (key.code == KeyCode::Char('u') || key.code == KeyCode::Char('U'))
+                && state.update_available.is_some()
+            {
+                state.mode = Mode::UpdateConfirm;
+            }
+        }
     }
 }
 
@@ -596,15 +677,14 @@ fn handle_settings_input(state: &mut AppState, key: KeyEvent) {
 }
 
 fn toggle_settings_item(state: &mut AppState) {
-    let item = SettingsItem::all()[state.settings_index];
+    let items = state.settings_category.items();
+    if state.settings_index >= items.len() {
+        return;
+    }
+    let item = items[state.settings_index];
     match item {
         SettingsItem::Theme => {
-            // Open theme picker
-            state.theme_index = Theme::all()
-                .iter()
-                .position(|t| *t == state.theme.inner())
-                .unwrap_or(0);
-            state.mode = Mode::ThemePicker;
+            adjust_settings_item(state, 1);
         }
         SettingsItem::SyncEnabled => {
             state.config.sync.enabled = !state.config.sync.enabled;
@@ -663,27 +743,17 @@ fn toggle_settings_item(state: &mut AppState) {
             state.mode = Mode::SettingsInput;
         }
         SettingsItem::SyncInterval => {
-            // Toggle through common intervals: 0 (manual), 60, 300, 600
-            let intervals = [0, 15, 30, 60, 300, 600, 1800];
-            let current_idx = intervals
-                .iter()
-                .position(|&i| i == state.config.sync.interval_secs)
-                .unwrap_or(0);
-            let next_idx = (current_idx + 1) % intervals.len();
-            state.config.sync.interval_secs = intervals[next_idx];
-            let _ = state.config.save();
-            let display = if state.config.sync.interval_secs == 0 {
-                "manual only".to_string()
-            } else {
-                format!("{}s", state.config.sync.interval_secs)
-            };
-            state.set_status(format!("Sync interval: {}", display));
+            adjust_settings_item(state, 1);
         }
     }
 }
 
 fn adjust_settings_item(state: &mut AppState, delta: i32) {
-    let item = SettingsItem::all()[state.settings_index];
+    let items = state.settings_category.items();
+    if state.settings_index >= items.len() {
+        return;
+    }
+    let item = items[state.settings_index];
     match item {
         SettingsItem::Theme => {
             let themes = Theme::all();
@@ -701,18 +771,22 @@ fn adjust_settings_item(state: &mut AppState, delta: i32) {
             state.set_status(format!("Theme: {}", state.theme.name()));
         }
         SettingsItem::SyncInterval => {
-            let current = state.config.sync.interval_secs as i64;
-            let new_val = if delta > 0 {
-                (current + 60).min(3600) as u64
+            let intervals = [0, 15, 30, 60, 300, 600, 1800];
+            let current_idx = intervals
+                .iter()
+                .position(|&i| i == state.config.sync.interval_secs)
+                .unwrap_or(0);
+            let new_idx = if delta > 0 {
+                (current_idx + 1) % intervals.len()
             } else {
-                (current - 60).max(0) as u64
+                current_idx.checked_sub(1).unwrap_or(intervals.len() - 1)
             };
-            state.config.sync.interval_secs = new_val;
+            state.config.sync.interval_secs = intervals[new_idx];
             let _ = state.config.save();
-            let display = if new_val == 0 {
+            let display = if state.config.sync.interval_secs == 0 {
                 "manual only".to_string()
             } else {
-                format!("{}s", new_val)
+                format!("{}s", state.config.sync.interval_secs)
             };
             state.set_status(format!("Sync interval: {}", display));
         }
@@ -974,7 +1048,11 @@ fn handle_task_editor(state: &mut AppState, key: KeyEvent) {
 fn handle_list_editor(state: &mut AppState, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => {
-            state.mode = Mode::Normal;
+            if state.return_to_settings {
+                state.mode = Mode::Settings;
+            } else {
+                state.mode = Mode::Normal;
+            }
             state.editing_list = None;
         }
         KeyCode::Enter => {
@@ -1009,7 +1087,11 @@ fn handle_list_editor(state: &mut AppState, key: KeyEvent) {
 fn handle_tag_editor(state: &mut AppState, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => {
-            state.mode = Mode::Normal;
+            if state.return_to_settings {
+                state.mode = Mode::Settings;
+            } else {
+                state.mode = Mode::Normal;
+            }
             state.editing_tag = None;
         }
         KeyCode::Enter => {

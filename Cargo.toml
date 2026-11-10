@@ -59,6 +59,10 @@ path = "tests/external_db_sync.rs"
 name = "unicode_input_handling"
 path = "tests/unicode_input_handling.rs"
 
+[[test]]
+name = "settings_menu_and_views"
+path = "tests/settings_menu_and_views.rs"
+
 [dependencies.anyhow]
 version = "1.0"
 

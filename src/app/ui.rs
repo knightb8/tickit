@@ -5,11 +5,12 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Tabs, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 
 use super::state::{
-    AppState, DueFilter, EditorField, Focus, Mode, QuickDatePreset, SettingsItem, View,
+    AppState, DueFilter, EditorField, Focus, Mode, QuickDatePreset, SettingsCategory, SettingsItem,
+    View,
 };
 use crate::theme::Theme;
 
@@ -112,9 +113,9 @@ pub fn render(frame: &mut Frame, state: &AppState) {
 
 const LEFT_COLUMN_PERCENT: u16 = 36;
 
-/// Render the unified top bar: Sections / Views on left, Due Filter on right (when in Tasks view)
+/// Render the unified top bar: Branding on left, Due Filter on right
 fn render_tabs(frame: &mut Frame, state: &AppState, area: Rect) {
-    if state.view == View::Tasks && area.width >= 75 {
+    if area.width >= 75 {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -123,51 +124,36 @@ fn render_tabs(frame: &mut Frame, state: &AppState, area: Rect) {
             ])
             .split(area);
 
-        render_sections_tabs(frame, state, chunks[0]);
+        render_header_branding(frame, state, chunks[0]);
         render_due_filter_header(frame, state, chunks[1]);
     } else {
-        render_sections_tabs(frame, state, area);
+        render_due_filter_header(frame, state, area);
     }
 }
 
-/// Render the sections / view tabs
-fn render_sections_tabs(frame: &mut Frame, state: &AppState, area: Rect) {
+/// Render the header branding block on the left
+fn render_header_branding(frame: &mut Frame, state: &AppState, area: Rect) {
     let colors = state.theme.colors();
 
-    let titles: Vec<Line> = View::all()
-        .iter()
-        .enumerate()
-        .map(|(i, view)| {
-            let style = if *view == state.view {
-                colors.tab_active()
-            } else {
-                colors.tab()
-            };
-            Line::from(vec![
-                Span::styled(format!(" {} ", i + 1), colors.key_hint()),
-                Span::styled(format!("{} ", view.name()), style),
-            ])
-        })
-        .collect();
+    let mut spans = vec![Span::styled(
+        format!(" {} Tickit ", ICON),
+        colors.logo_style_primary(),
+    )];
 
-    let tabs = Tabs::new(titles)
+    if area.width >= 24 {
+        spans.push(Span::styled("[s: settings]", colors.key_hint()));
+    }
+
+    let p = Paragraph::new(Line::from(spans))
         .block(
             Block::default()
-                .title(format!(" {} Tickit ", ICON))
-                .title_style(colors.logo_style_primary())
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(colors.block()),
         )
-        .highlight_style(colors.tab_active())
-        .select(
-            View::all()
-                .iter()
-                .position(|v| *v == state.view)
-                .unwrap_or(0),
-        );
+        .alignment(Alignment::Left);
 
-    frame.render_widget(tabs, area);
+    frame.render_widget(p, area);
 }
 
 fn due_filter_pill_label(filter: DueFilter, count: usize, compact: bool) -> String {
@@ -882,7 +868,7 @@ fn render_status_bar(frame: &mut Frame, state: &AppState, area: Rect) {
             Span::styled("f", colors.key_hint()),
             Span::styled(": due filter  ", colors.text_muted()),
             Span::styled("Tab", colors.key_hint()),
-            Span::styled(": views  ", colors.text_muted()),
+            Span::styled(": focus  ", colors.text_muted()),
             Span::styled("?", colors.key_hint()),
             Span::styled(": help  ", colors.text_muted()),
             Span::styled("s", colors.key_hint()),
@@ -968,11 +954,14 @@ fn render_help_popup(frame: &mut Frame, state: &AppState) {
         )]),
         Line::from(vec![
             Span::styled("  Tab / Shift+Tab    ", colors.key_hint()),
-            Span::styled("Switch between views", colors.text()),
+            Span::styled("Switch focus (sidebar / tasks)", colors.text()),
         ]),
         Line::from(vec![
-            Span::styled("  1-3                ", colors.key_hint()),
-            Span::styled("Jump to view directly", colors.text()),
+            Span::styled("  s                  ", colors.key_hint()),
+            Span::styled(
+                "Open Settings (Lists, Tags, Sync, ...)",
+                colors.text_accent(),
+            ),
         ]),
         Line::from(vec![
             Span::styled("  j/k or ↑/↓         ", colors.key_hint()),
@@ -1157,27 +1146,127 @@ fn render_theme_picker(frame: &mut Frame, state: &AppState) {
     frame.render_widget(theme_list, area);
 }
 
-/// Render settings dialog
+/// Render settings dialog (tuios style)
 fn render_settings_dialog(frame: &mut Frame, state: &AppState) {
-    use crate::app::state::SettingsItem;
-
     let colors = state.theme.colors();
     let area = frame.area();
 
     // Calculate popup size
-    let popup_width = 60u16.min(area.width.saturating_sub(4));
-    let popup_height = 18u16.min(area.height.saturating_sub(4));
+    let popup_width = 80u16.min(area.width.saturating_sub(4));
+    let popup_height = 22u16.min(area.height.saturating_sub(2));
 
     let popup_area = Rect {
-        x: (area.width - popup_width) / 2,
-        y: (area.height - popup_height) / 2,
+        x: (area.width.saturating_sub(popup_width)) / 2,
+        y: (area.height.saturating_sub(popup_height)) / 2,
         width: popup_width,
         height: popup_height,
     };
 
     frame.render_widget(Clear, popup_area);
 
-    let items = SettingsItem::all();
+    let is_editing = state.mode == Mode::SettingsInput;
+
+    let footer_text = match state.settings_category {
+        SettingsCategory::Lists => {
+            " Tab: category │ j/k: select │ a: add │ e: edit │ d: delete │ Esc: close "
+        }
+        SettingsCategory::Tags => {
+            " Tab: category │ j/k: select │ a: add │ e: edit │ d: delete │ Esc: close "
+        }
+        SettingsCategory::About => " Tab: category │ g: open github │ Esc: close ",
+        _ => {
+            if is_editing {
+                " Type to edit │ ↵ save │ Esc cancel "
+            } else {
+                " Tab: category │ ↑↓: navigate │ ←→/↵: change │ Esc: close "
+            }
+        }
+    };
+
+    let outer_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(colors.accent))
+        .border_type(BorderType::Rounded)
+        .style(Style::default().bg(colors.bg))
+        .title_bottom(Line::from(footer_text).centered());
+
+    let inner = outer_block.inner(popup_area);
+    frame.render_widget(outer_block, popup_area);
+
+    if inner.height < 4 || inner.width < 30 {
+        return;
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // Top badge ("Settings")
+            Constraint::Length(1), // Category navigation tabs
+            Constraint::Length(1), // Thin divider
+            Constraint::Min(1),    // Category Content Body
+        ])
+        .split(inner);
+
+    // 1. Top Title Badge
+    let badge_line = Line::from(vec![Span::styled(
+        " Settings ",
+        Style::default()
+            .fg(colors.bg)
+            .bg(colors.accent)
+            .add_modifier(Modifier::BOLD),
+    )]);
+    frame.render_widget(Paragraph::new(badge_line), chunks[0]);
+
+    // 2. Category Tabs
+    let mut cat_spans = Vec::new();
+    cat_spans.push(Span::raw(" "));
+    for cat in SettingsCategory::all() {
+        let is_active = *cat == state.settings_category;
+        if is_active {
+            cat_spans.push(Span::styled(
+                format!(" {} ", cat.name()),
+                Style::default()
+                    .fg(colors.bg)
+                    .bg(colors.accent)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            cat_spans.push(Span::styled(
+                format!(" {} ", cat.name()),
+                colors.text_muted(),
+            ));
+        }
+        cat_spans.push(Span::raw(" "));
+    }
+    frame.render_widget(Paragraph::new(Line::from(cat_spans)), chunks[1]);
+
+    // 3. Thin Horizontal Divider
+    let divider = "─".repeat(inner.width as usize);
+    frame.render_widget(
+        Paragraph::new(Span::styled(divider, colors.block())),
+        chunks[2],
+    );
+
+    // 4. Content Body
+    match state.settings_category {
+        SettingsCategory::Appearance | SettingsCategory::Behavior | SettingsCategory::Sync => {
+            render_settings_items_category(frame, state, chunks[3]);
+        }
+        SettingsCategory::Lists => {
+            render_settings_lists_category(frame, state, chunks[3]);
+        }
+        SettingsCategory::Tags => {
+            render_settings_tags_category(frame, state, chunks[3]);
+        }
+        SettingsCategory::About => {
+            render_settings_about_category(frame, state, chunks[3]);
+        }
+    }
+}
+
+fn render_settings_items_category(frame: &mut Frame, state: &AppState, area: Rect) {
+    let colors = state.theme.colors();
+    let items = state.settings_category.items();
     let is_editing = state.mode == Mode::SettingsInput;
 
     let list_items: Vec<ListItem> = items
@@ -1185,128 +1274,439 @@ fn render_settings_dialog(frame: &mut Frame, state: &AppState) {
         .enumerate()
         .map(|(i, item)| {
             let selected = i == state.settings_index;
-            let cursor = if selected { "▸" } else { " " };
+            let prefix = if selected { "› " } else { "  " };
 
-            // If we're editing this item, show the input buffer with cursor at position
-            let value_str = if is_editing && state.settings_editing == Some(*item) {
-                let buf = &state.input_buffer;
-                let pos = state.cursor_pos.min(buf.len());
-                let safe_pos = if buf.is_char_boundary(pos) {
-                    pos
-                } else {
-                    buf[..pos]
-                        .char_indices()
-                        .last()
-                        .map(|(i, c)| i + c.len_utf8())
-                        .unwrap_or(0)
-                };
-                let before = &buf[..safe_pos];
-                let after = &buf[safe_pos..];
-                format!("{}▏{}", before, after)
-            } else {
-                get_settings_value_display(state, *item)
-            };
+            let (widget_spans, widget_len) =
+                get_settings_widget_spans(state, *item, is_editing, selected);
 
-            let style = if selected {
+            let label_str = format!("{}{}", prefix, item.label());
+            let label_len = unicode_width::UnicodeWidthStr::width(label_str.as_str());
+
+            let padding = (area.width as usize).saturating_sub(label_len + widget_len + 1);
+
+            let label_style = if selected {
                 colors.selected().add_modifier(Modifier::BOLD)
             } else {
                 colors.text()
             };
 
-            let value_style = if is_editing && state.settings_editing == Some(*item) {
+            let mut row_spans = vec![Span::styled(label_str, label_style)];
+            row_spans.push(Span::raw(" ".repeat(padding)));
+            row_spans.extend(widget_spans);
+
+            let row_line = Line::from(row_spans);
+            if selected {
+                ListItem::new(row_line).style(colors.selected())
+            } else {
+                ListItem::new(row_line)
+            }
+        })
+        .collect();
+
+    frame.render_widget(List::new(list_items), area);
+}
+
+fn get_settings_widget_spans<'a>(
+    state: &'a AppState,
+    item: SettingsItem,
+    is_editing: bool,
+    selected: bool,
+) -> (Vec<Span<'a>>, usize) {
+    let colors = state.theme.colors();
+
+    match item {
+        SettingsItem::Theme => {
+            let name = state.theme.name();
+            let arrow_style = if selected {
                 Style::default()
                     .fg(colors.accent)
                     .add_modifier(Modifier::BOLD)
             } else {
                 colors.text_muted()
             };
-
-            ListItem::new(Line::from(vec![
-                Span::styled(format!(" {} ", cursor), style),
-                Span::styled(format!("{} ", item.icon()), style),
-                Span::styled(format!("{:<20}", item.label()), style),
-                Span::styled(value_str, value_style),
-            ]))
-        })
-        .collect();
-
-    let footer_text = if is_editing {
-        " Type to edit │ ↵ save │ Esc cancel "
-    } else {
-        " ↑↓ navigate │ ↵/␣ toggle │ ←→ adjust │ Esc close "
-    };
-
-    let settings_list = List::new(list_items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(colors.accent))
-            .border_type(BorderType::Rounded)
-            .style(Style::default().bg(colors.bg))
-            .title(format!(
-                " ⚙ Settings ({}/{}) ",
-                state.settings_index + 1,
-                items.len()
-            ))
-            .title_bottom(Line::from(footer_text).centered()),
-    );
-
-    frame.render_widget(settings_list, popup_area);
-}
-
-fn get_settings_value_display(state: &AppState, item: SettingsItem) -> String {
-    use crate::app::state::SettingsItem;
-
-    match item {
-        SettingsItem::Theme => state.theme.name().to_string(),
-        SettingsItem::SyncEnabled => {
-            if state.config.sync.enabled {
-                "✓ Enabled".to_string()
+            let text_style = if selected {
+                Style::default()
+                    .fg(colors.primary)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                "✗ Disabled".to_string()
+                colors.text()
+            };
+            let text_len = unicode_width::UnicodeWidthStr::width(name) + 4;
+            let spans = vec![
+                Span::styled("‹ ", arrow_style),
+                Span::styled(name.to_string(), text_style),
+                Span::styled(" ›", arrow_style),
+            ];
+            (spans, text_len)
+        }
+        SettingsItem::ShowCompletedDefault => {
+            let on = state.config.show_completed;
+            make_toggle_spans(on, &colors)
+        }
+        SettingsItem::EnterCompletes => {
+            let label = if state.config.enter_completes {
+                "Complete task"
+            } else {
+                "Open / Edit"
+            };
+            let arrow_style = if selected {
+                Style::default()
+                    .fg(colors.accent)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                colors.text_muted()
+            };
+            let text_style = if selected {
+                Style::default()
+                    .fg(colors.primary)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                colors.text()
+            };
+            let text_len = unicode_width::UnicodeWidthStr::width(label) + 4;
+            let spans = vec![
+                Span::styled("‹ ", arrow_style),
+                Span::styled(label.to_string(), text_style),
+                Span::styled(" ›", arrow_style),
+            ];
+            (spans, text_len)
+        }
+        SettingsItem::Notifications => {
+            let on = state.config.notifications;
+            make_toggle_spans(on, &colors)
+        }
+        SettingsItem::SyncEnabled => {
+            let on = state.config.sync.enabled;
+            make_toggle_spans(on, &colors)
+        }
+        SettingsItem::SyncServer => {
+            if is_editing && state.settings_editing == Some(item) {
+                render_input_spans(&state.input_buffer, state.cursor_pos, &colors)
+            } else {
+                let text = state.config.sync.server.as_deref().unwrap_or("(not set)");
+                make_bracket_spans(text, &colors)
             }
         }
-        SettingsItem::SyncServer => state
-            .config
-            .sync
-            .server
-            .clone()
-            .unwrap_or_else(|| "Not set".to_string()),
         SettingsItem::SyncToken => {
-            if state.config.sync.token.is_some() {
-                "••••••••".to_string()
+            if is_editing && state.settings_editing == Some(item) {
+                render_input_spans(&state.input_buffer, state.cursor_pos, &colors)
             } else {
-                "Not set".to_string()
+                let text = if state.config.sync.token.is_some() {
+                    "••••••••"
+                } else {
+                    "(not set)"
+                };
+                make_bracket_spans(text, &colors)
             }
         }
         SettingsItem::SyncInterval => {
-            if state.config.sync.interval_secs > 0 {
+            let text = if state.config.sync.interval_secs == 0 {
+                "manual".to_string()
+            } else {
                 format!("{}s", state.config.sync.interval_secs)
+            };
+            let arrow_style = if selected {
+                Style::default()
+                    .fg(colors.accent)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                "Manual only".to_string()
-            }
-        }
-        SettingsItem::Notifications => {
-            if state.config.notifications {
-                "✓ Enabled".to_string()
+                colors.text_muted()
+            };
+            let text_style = if selected {
+                Style::default()
+                    .fg(colors.primary)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                "✗ Disabled".to_string()
-            }
-        }
-        SettingsItem::ShowCompletedDefault => {
-            if state.config.show_completed {
-                "✓ Show".to_string()
-            } else {
-                "✗ Hide".to_string()
-            }
-        }
-        SettingsItem::EnterCompletes => {
-            if state.config.enter_completes {
-                "↵ Enter completes".to_string()
-            } else {
-                "␣ Space / x (Safe)".to_string()
-            }
+                colors.text()
+            };
+            let text_len = unicode_width::UnicodeWidthStr::width(text.as_str()) + 4;
+            let spans = vec![
+                Span::styled("‹ ", arrow_style),
+                Span::styled(text, text_style),
+                Span::styled(" ›", arrow_style),
+            ];
+            (spans, text_len)
         }
     }
+}
+
+fn make_toggle_spans<'a>(on: bool, colors: &crate::theme::ThemeColors) -> (Vec<Span<'a>>, usize) {
+    if on {
+        let spans = vec![
+            Span::styled("[ ", colors.text_muted()),
+            Span::styled(
+                "on",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ]", colors.text_muted()),
+        ];
+        (spans, 6)
+    } else {
+        let spans = vec![
+            Span::styled("[ ", colors.text_muted()),
+            Span::styled("off", colors.text_muted()),
+            Span::styled(" ]", colors.text_muted()),
+        ];
+        (spans, 7)
+    }
+}
+
+fn make_bracket_spans<'a>(
+    text: &'a str,
+    colors: &crate::theme::ThemeColors,
+) -> (Vec<Span<'a>>, usize) {
+    let len = unicode_width::UnicodeWidthStr::width(text) + 4;
+    let spans = vec![
+        Span::styled("[ ", colors.text_muted()),
+        Span::styled(text, colors.text_secondary()),
+        Span::styled(" ]", colors.text_muted()),
+    ];
+    (spans, len)
+}
+
+fn render_input_spans<'a>(
+    buf: &'a str,
+    cursor_pos: usize,
+    colors: &crate::theme::ThemeColors,
+) -> (Vec<Span<'a>>, usize) {
+    let pos = cursor_pos.min(buf.len());
+    let safe_pos = if buf.is_char_boundary(pos) {
+        pos
+    } else {
+        buf[..pos]
+            .char_indices()
+            .last()
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(0)
+    };
+    let before = &buf[..safe_pos];
+    let after = &buf[safe_pos..];
+    let text = format!("{}▏{}", before, after);
+    let len = unicode_width::UnicodeWidthStr::width(text.as_str()) + 4;
+    let spans = vec![
+        Span::styled("[ ", Style::default().fg(colors.accent)),
+        Span::styled(
+            text,
+            Style::default()
+                .fg(colors.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ]", Style::default().fg(colors.accent)),
+    ];
+    (spans, len)
+}
+
+fn render_settings_lists_category(frame: &mut Frame, state: &AppState, area: Rect) {
+    let colors = state.theme.colors();
+
+    let mut lines = Vec::new();
+    lines.push(ListItem::new(Line::from(vec![Span::styled(
+        "   Icon Name                         Default       Tasks",
+        colors.text_secondary().add_modifier(Modifier::BOLD),
+    )])));
+
+    for (i, list) in state.lists.iter().enumerate() {
+        let selected = i == state.list_index;
+        let prefix = if selected { " › " } else { "   " };
+        let icon_str = format!("{:<4}", list.icon);
+        let name_trimmed = if list.name.len() > 26 {
+            format!("{}…", &list.name[..25])
+        } else {
+            list.name.clone()
+        };
+        let name_str = format!("{:<28}", name_trimmed);
+        let def_str = if list.is_inbox {
+            format!("{:<14}", "[default]")
+        } else {
+            format!("{:<14}", "")
+        };
+        let count = state
+            .tasks
+            .iter()
+            .filter(|t| t.list_id == list.id && !t.completed)
+            .count();
+        let count_str = format!("{} active", count);
+
+        let row_style = if selected {
+            colors.selected().add_modifier(Modifier::BOLD)
+        } else {
+            colors.text()
+        };
+
+        lines.push(
+            ListItem::new(Line::from(vec![
+                Span::styled(prefix, row_style),
+                Span::styled(icon_str, row_style),
+                Span::styled(name_str, row_style),
+                Span::styled(
+                    def_str,
+                    if list.is_inbox {
+                        colors.text_info()
+                    } else {
+                        colors.text_muted()
+                    },
+                ),
+                Span::styled(count_str, colors.text_muted()),
+            ]))
+            .style(if selected {
+                colors.selected()
+            } else {
+                Style::default()
+            }),
+        );
+    }
+
+    if state.lists.is_empty() {
+        lines.push(ListItem::new(Line::from(Span::styled(
+            "   (No lists created yet)",
+            colors.text_muted(),
+        ))));
+    }
+
+    frame.render_widget(List::new(lines), area);
+}
+
+fn render_settings_tags_category(frame: &mut Frame, state: &AppState, area: Rect) {
+    let colors = state.theme.colors();
+
+    let mut lines = Vec::new();
+    lines.push(ListItem::new(Line::from(vec![Span::styled(
+        "   Color       Tag Name                        Tasks",
+        colors.text_secondary().add_modifier(Modifier::BOLD),
+    )])));
+
+    for (i, tag) in state.tags.iter().enumerate() {
+        let selected = i == state.tag_index;
+        let prefix = if selected { " › " } else { "   " };
+        let tag_color = Color::from_u32(
+            u32::from_str_radix(tag.color.trim_start_matches('#'), 16).unwrap_or(0x3498db),
+        );
+        let hex_str = format!(" {:<10}", tag.color);
+        let name_trimmed = if tag.name.len() > 30 {
+            format!("{}…", &tag.name[..29])
+        } else {
+            tag.name.clone()
+        };
+        let name_str = format!("{:<32}", name_trimmed);
+        let count = state
+            .tasks
+            .iter()
+            .filter(|t| t.tag_ids.contains(&tag.id) && !t.completed)
+            .count();
+        let count_str = format!("{} active", count);
+
+        let row_style = if selected {
+            colors.selected().add_modifier(Modifier::BOLD)
+        } else {
+            colors.text()
+        };
+
+        lines.push(
+            ListItem::new(Line::from(vec![
+                Span::styled(prefix, row_style),
+                Span::styled(
+                    "■",
+                    Style::default().fg(tag_color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(hex_str, colors.text_muted()),
+                Span::styled(name_str, row_style),
+                Span::styled(count_str, colors.text_muted()),
+            ]))
+            .style(if selected {
+                colors.selected()
+            } else {
+                Style::default()
+            }),
+        );
+    }
+
+    if state.tags.is_empty() {
+        lines.push(ListItem::new(Line::from(Span::styled(
+            "   (No tags created yet)",
+            colors.text_muted(),
+        ))));
+    }
+
+    frame.render_widget(List::new(lines), area);
+}
+
+fn render_settings_about_category(frame: &mut Frame, state: &AppState, area: Rect) {
+    let colors = state.theme.colors();
+
+    let total_tasks = state.tasks.len();
+    let completed_tasks = state.tasks.iter().filter(|t| t.completed).count();
+    let active_tasks = total_tasks.saturating_sub(completed_tasks);
+
+    let sync_status_str = if !state.config.sync.enabled {
+        "Disabled".to_string()
+    } else if state.sync_status.syncing {
+        "Syncing...".to_string()
+    } else if state.sync_status.last_error.is_some() {
+        "Error (see status)".to_string()
+    } else {
+        "Connected".to_string()
+    };
+
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(format!(" {} Tickit ", ICON), colors.logo_style_primary()),
+            Span::styled(
+                format!("v{}", env!("CARGO_PKG_VERSION")),
+                colors.text_accent().add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                " — Fast, beautiful terminal task manager",
+                colors.text_muted(),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Tasks:        ", colors.text_secondary()),
+            Span::styled(format!("{} total", total_tasks), colors.text()),
+            Span::styled(
+                format!(" ({} active, {} completed)", active_tasks, completed_tasks),
+                colors.text_muted(),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  Lists / Tags: ", colors.text_secondary()),
+            Span::styled(
+                format!("{} lists, {} tags", state.lists.len(), state.tags.len()),
+                colors.text(),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  Sync Status:  ", colors.text_secondary()),
+            Span::styled(sync_status_str, colors.text_info()),
+        ]),
+        Line::from(vec![
+            Span::styled("  Repository:   ", colors.text_secondary()),
+            Span::styled(
+                "https://github.com/ricardodantas/tickit",
+                colors.text_accent(),
+            ),
+            Span::styled(" (press 'g' to open)", colors.key_hint()),
+        ]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "  Shortcuts Cheatsheet",
+            colors.text_primary().add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(vec![
+            Span::styled("  Tab", colors.key_hint()),
+            Span::styled(": focus sidebar/tasks  ", colors.text_muted()),
+            Span::styled("/", colors.key_hint()),
+            Span::styled(": live search  ", colors.text_muted()),
+            Span::styled("f", colors.key_hint()),
+            Span::styled(": due filter  ", colors.text_muted()),
+            Span::styled("n", colors.key_hint()),
+            Span::styled(": new task", colors.text_muted()),
+        ]),
+    ];
+
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 /// Render confirmation dialog

@@ -11,6 +11,72 @@ use crate::models::{List, Priority, Tag, Task};
 use crate::sync::SyncStatus;
 use crate::theme::Theme;
 
+/// Settings dialog categories (tuios style)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SettingsCategory {
+    #[default]
+    Appearance,
+    Behavior,
+    Lists,
+    Tags,
+    Sync,
+    About,
+}
+
+impl SettingsCategory {
+    pub fn all() -> &'static [SettingsCategory] {
+        &[
+            SettingsCategory::Appearance,
+            SettingsCategory::Behavior,
+            SettingsCategory::Lists,
+            SettingsCategory::Tags,
+            SettingsCategory::Sync,
+            SettingsCategory::About,
+        ]
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            SettingsCategory::Appearance => "Appearance",
+            SettingsCategory::Behavior => "Behavior",
+            SettingsCategory::Lists => "Lists",
+            SettingsCategory::Tags => "Tags",
+            SettingsCategory::Sync => "Sync",
+            SettingsCategory::About => "About",
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        let all = Self::all();
+        let idx = all.iter().position(|c| c == self).unwrap_or(0);
+        all[(idx + 1) % all.len()]
+    }
+
+    pub fn prev(&self) -> Self {
+        let all = Self::all();
+        let idx = all.iter().position(|c| c == self).unwrap_or(0);
+        all[(idx + all.len() - 1) % all.len()]
+    }
+
+    pub fn items(&self) -> &'static [SettingsItem] {
+        match self {
+            SettingsCategory::Appearance => &[SettingsItem::Theme],
+            SettingsCategory::Behavior => &[
+                SettingsItem::ShowCompletedDefault,
+                SettingsItem::EnterCompletes,
+                SettingsItem::Notifications,
+            ],
+            SettingsCategory::Sync => &[
+                SettingsItem::SyncEnabled,
+                SettingsItem::SyncServer,
+                SettingsItem::SyncToken,
+                SettingsItem::SyncInterval,
+            ],
+            SettingsCategory::Lists | SettingsCategory::Tags | SettingsCategory::About => &[],
+        }
+    }
+}
+
 /// Settings menu items
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsItem {
@@ -384,8 +450,12 @@ pub struct AppState {
     pub theme_index: usize,
     /// Settings menu index
     pub settings_index: usize,
+    /// Settings category (tuios style)
+    pub settings_category: SettingsCategory,
     /// Which settings item is being edited (for text input)
     pub settings_editing: Option<SettingsItem>,
+    /// Return to settings dialog after adding/editing/deleting lists or tags
+    pub return_to_settings: bool,
 
     // Editor state
     /// Current editor field
@@ -501,7 +571,9 @@ impl AppState {
             tag_index: 0,
             theme_index: 0,
             settings_index: 0,
+            settings_category: SettingsCategory::default(),
             settings_editing: None,
+            return_to_settings: false,
             editor_field: EditorField::Title,
             input_buffer: String::new(),
             cursor_pos: 0,
@@ -923,7 +995,11 @@ impl AppState {
             self.set_status("Task created");
         }
 
-        self.mode = Mode::Normal;
+        if self.return_to_settings {
+            self.mode = Mode::Settings;
+        } else {
+            self.mode = Mode::Normal;
+        }
         self.refresh_data()?;
         self.mark_sync_pending();
         Ok(())
@@ -1012,7 +1088,12 @@ impl AppState {
                     self.set_status("Tag deleted");
                 }
             }
-            self.mode = Mode::Normal;
+            if self.return_to_settings {
+                self.return_to_settings = false;
+                self.mode = Mode::Settings;
+            } else {
+                self.mode = Mode::Normal;
+            }
             self.refresh_data()?;
             self.mark_sync_pending();
         }
@@ -1022,7 +1103,12 @@ impl AppState {
     /// Cancel confirmation
     pub fn cancel_confirm(&mut self) {
         self.confirm_action = None;
-        self.mode = Mode::Normal;
+        if self.return_to_settings {
+            self.return_to_settings = false;
+            self.mode = Mode::Settings;
+        } else {
+            self.mode = Mode::Normal;
+        }
     }
 
     /// Open URL of selected task
@@ -1065,7 +1151,12 @@ impl AppState {
 
     /// Start editing the selected list
     pub fn start_edit_list(&mut self) {
-        if let Some(list) = self.selected_list().cloned() {
+        let list_opt = if self.mode == Mode::Settings {
+            self.lists.get(self.list_index).cloned()
+        } else {
+            self.selected_list().cloned()
+        };
+        if let Some(list) = list_opt {
             if list.is_inbox {
                 self.set_status("Cannot edit inbox");
                 return;
@@ -1096,7 +1187,11 @@ impl AppState {
             self.set_status("List created");
         }
 
-        self.mode = Mode::Normal;
+        if self.return_to_settings {
+            self.mode = Mode::Settings;
+        } else {
+            self.mode = Mode::Normal;
+        }
         self.refresh_data()?;
         self.mark_sync_pending();
         Ok(())
@@ -1104,7 +1199,12 @@ impl AppState {
 
     /// Confirm delete list
     pub fn confirm_delete_list(&mut self) {
-        if let Some(list) = self.selected_list() {
+        let list_opt = if self.mode == Mode::Settings {
+            self.lists.get(self.list_index)
+        } else {
+            self.selected_list()
+        };
+        if let Some(list) = list_opt {
             if list.is_inbox {
                 self.set_status("Cannot delete inbox");
                 return;
@@ -1156,7 +1256,11 @@ impl AppState {
             self.set_status("Tag created");
         }
 
-        self.mode = Mode::Normal;
+        if self.return_to_settings {
+            self.mode = Mode::Settings;
+        } else {
+            self.mode = Mode::Normal;
+        }
         self.refresh_data()?;
         self.mark_sync_pending();
         Ok(())
